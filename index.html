@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Merisää & Reittisuunnittelu</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Leaflet Velocity CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.css" />
+
+    <style>
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; overflow: hidden; }
+        #app { display: flex; flex-direction: column; height: 100%; width: 100%; position: relative; }
+        #map { flex: 1; width: 100%; z-index: 1; }
+        
+        /* Kartan päällä olevat kelluvat napit */
+        .map-floating-controls {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .map-btn {
+            background: #1e293b;
+            color: #38bdf8;
+            border: 1px solid #475569;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            transition: all 0.2s;
+        }
+        .map-btn:hover { background: #334155; color: #fff; }
+        .map-btn.active { background: #0284c7; color: #fff; border-color: #38bdf8; }
+
+        .panel {
+            background: #1e293b;
+            padding: 10px 12px;
+            box-shadow: 0 -4px 15px rgba(0,0,0,0.4);
+            z-index: 1000;
+            border-top: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 65vh;
+            overflow-y: auto;
+        }
+
+        .panel > * { flex-shrink: 0; }
+
+        /* Sääkortin ruudukko */
+        .weather-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 6px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px 4px;
+            text-align: center;
+            align-items: center;
+        }
+
+        @media (min-width: 600px) {
+            .weather-card { grid-template-columns: repeat(6, 1fr); }
+        }
+
+        .stat-box { 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 52px; 
+            border-radius: 6px;
+            transition: background-color 0.4s ease, border-color 0.4s ease, transform 0.2s ease, box-shadow 0.2s ease;
+            border: 1px solid transparent;
+            cursor: pointer;
+            position: relative;
+        }
+        .stat-box:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .stat-box.active-metric {
+            box-shadow: inset 0 0 0 2px #38bdf8, 0 0 12px rgba(56, 189, 248, 0.4) !important;
+        }
+
+        .stat-val { 
+            font-size: 11px; 
+            font-weight: bold; 
+            color: #38bdf8; 
+            margin: 1px 0; 
+            transition: color 0.4s ease;
+        }
+        .stat-sub { 
+            font-size: 9px; 
+            color: #94a3b8; 
+            transition: color 0.4s ease;
+        }
+        .wind-arrow {
+            font-size: 15px;
+            display: inline-block;
+            transition: transform 0.3s ease, color 0.4s ease;
+            line-height: 1;
+            margin: 1px 0;
+            color: #f8fafc;
+        }
+
+        .collapsible-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 260px;
+            opacity: 1;
+            overflow: hidden;
+            transition: max-height 0.35s ease, opacity 0.25s ease, margin 0.3s ease;
+        }
+
+        .collapsible-controls.collapsed {
+            max-height: 0;
+            opacity: 0;
+            margin: 0;
+            pointer-events: none;
+        }
+
+        .toggle-controls-btn {
+            background: #334155;
+            color: #94a3b8;
+            border: none;
+            border-radius: 4px;
+            padding: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: background 0.2s, color 0.2s;
+        }
+        .toggle-controls-btn:hover { background: #475569; color: #fff; }
+
+        .controls-row {
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 8px;
+            width: 100%;
+        }
+
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: #e2e8f0;
+            margin: 2px 0;
+        }
+        .checkbox-row input[type="checkbox"] {
+            accent-color: #38bdf8;
+            cursor: pointer;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            min-width: 0;
+        }
+
+        label { font-size: 10px; text-transform: uppercase; color: #94a3b8; font-weight: 600; margin-bottom: 2px; white-space: nowrap; }
+        
+        input[type="number"], input[type="datetime-local"] {
+            background: #0f172a;
+            border: 1px solid #475569;
+            color: #fff;
+            padding: 4px 6px;
+            border-radius: 6px;
+            font-size: 12px;
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            -webkit-appearance: none;
+            min-height: 30px;
+        }
+
+        .btn-group { display: flex; gap: 6px; width: 100%; }
+        button.action-btn {
+            flex: 1;
+            padding: 6px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 11px;
+            cursor: pointer;
+            transition: background 0.2s;
+            min-height: 30px;
+        }
+        .btn-primary { background: #0284c7; color: white; }
+        .btn-primary:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+        .btn-secondary { background: #475569; color: white; }
+        .btn-secondary:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+        .btn-danger { background: #ef4444; color: white; max-width: 70px; }
+
+        .slider-container { display: flex; flex-direction: column; gap: 2px; }
+        input[type="range"] { width: 100%; accent-color: #38bdf8; margin: 2px 0; }
+
+        .info-banner {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid #334155;
+            font-size: 11px;
+            pointer-events: none;
+            backdrop-filter: blur(4px);
+            white-space: nowrap;
+            max-width: 80vw;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .waypoint-marker { display: flex; justify-content: center; align-items: center; }
+        .waypoint-marker div {
+            width: 14px; height: 14px;
+            background-color: #0284c7;
+            border: 2px solid #38bdf8;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(0,0,0,0.6);
+            cursor: pointer;
+        }
+
+        /* Plotteri GPS-symboli & Suuntaviiva */
+        .gps-plotter-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+        .gps-arrow {
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-bottom: 26px solid #ff0055;
+            filter: drop-shadow(0 0 4px rgba(0,0,0,0.8));
+            position: relative;
+        }
+        .gps-arrow::after {
+            content: '';
+            position: absolute;
+            top: 16px;
+            left: -5px;
+            width: 10px;
+            height: 10px;
+            background: #ffffff;
+            border-radius: 50%;
+        }
+
+        /* Modal Overlay & Dialog */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
+        .modal-content {
+            background: #1e293b;
+            border: 1px solid #475569;
+            border-radius: 12px;
+            padding: 16px;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 6px;
+        }
+        .modal-title { font-size: 14px; font-weight: bold; color: #38bdf8; }
+        .modal-close { background: none; border: none; color: #94a3b8; font-size: 18px; cursor: pointer; padding: 0; line-height: 1; }
+        .info-group { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+        .info-item { display: flex; flex-direction: column; gap: 2px; }
+        .info-label { font-size: 10px; text-transform: uppercase; color: #94a3b8; font-weight: 700; }
+        .info-val { font-size: 12px; color: #e2e8f0; line-height: 1.3; }
+        .btn-modal-close {
+            background: #0284c7;
+            color: white;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 12px;
+            margin-top: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div class="info-banner" id="banner">Klikkaa karttaa lisätäksesi reittipisteitä.</div>
+    
+    <div class="map-floating-controls">
+        <button class="map-btn" id="btnInfo" title="Tiedot & Lähde">ℹ</button>
+        <button class="map-btn" id="btnGps" title="Keskitys & GPS-seuranta">📍</button>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="panel">
+        <div class="weather-card">
+            <!-- 1. Aika & Matka -->
+            <div class="stat-box" id="box-time" title="Klikkaa värjätäksesi reitti kokonaisvaikeuden mukaan">
+                <span class="stat-sub">Aika / Yleisarvio</span>
+                <span class="stat-val" id="timeVal">--:--</span>
+                <span class="stat-sub" id="distVal">0.0 NM</span>
+            </div>
+            <!-- 2. Tuuli -->
+            <div class="stat-box" id="box-windspeed" title="Klikkaa värjätäksesi reitti tuulen nopeuden mukaan">
+                <span class="stat-sub">Tuuli</span>
+                <span class="stat-val" id="windSpeedVal">--</span>
+                <span class="stat-sub" id="gustVal">Puuska: --</span>
+            </div>
+            <!-- 3. Tuuli & Kulma -->
+            <div class="stat-box" id="box-windangle" title="Klikkaa värjätäksesi reitti suhteellisen tuulen suunnan mukaan">
+                <span class="stat-sub">Tuuli & Kulma</span>
+                <div class="wind-arrow" id="windArrow">⬆</div>
+                <span class="stat-val" id="relWindVal">--</span>
+                <span class="stat-sub" id="windDirVal">--°</span>
+            </div>
+            <!-- 4. Aallokko -->
+            <div class="stat-box" id="box-waves" title="Klikkaa värjätäksesi reitti aallokon mukaan">
+                <span class="stat-sub">Aallokko</span>
+                <div class="wind-arrow" id="waveArrow">⬆</div>
+                <span class="stat-val" id="waveHeightVal">-- m</span>
+                <span class="stat-sub" id="waveDirVal">--°</span>
+            </div>
+            <!-- 5. Merivirrat -->
+            <div class="stat-box" id="box-currents" title="Klikkaa värjätäksesi reitti merivirtojen mukaan">
+                <span class="stat-sub">Merivirrat</span>
+                <div class="wind-arrow" id="currentArrow">⬆</div>
+                <span class="stat-val" id="currentSpeedVal">-- kn</span>
+                <span class="stat-sub" id="currentDirVal">--°</span>
+            </div>
+            <!-- 6. Sää -->
+            <div class="stat-box" id="box-weather" title="Klikkaa värjätäksesi reitti säätilan mukaan">
+                <span class="stat-sub">Sää</span>
+                <span class="stat-val" id="tempVal">-- °C</span>
+                <span class="stat-sub" id="weatherDescVal">--</span>
+            </div>
+        </div>
+
+        <!-- Liukusäädin -->
+        <div class="slider-container">
+            <label for="routeSlider">Aja reittiä (Siirrä venettä)</label>
+            <input type="range" id="routeSlider" min="0" max="100" value="0" disabled>
+        </div>
+
+        <!-- Taitettava ohjausosio -->
+        <div class="collapsible-controls" id="controlsDrawer">
+            <div class="controls-row">
+                <div class="field">
+                    <label for="speed">Oletusnopeus (kn)</label>
+                    <input type="number" id="speed" value="6.0" step="0.5" min="0.5">
+                </div>
+                <div class="field">
+                    <label for="startTime">Lähtöaika</label>
+                    <input type="datetime-local" id="startTime">
+                </div>
+            </div>
+
+            <div class="checkbox-row">
+                <input type="checkbox" id="chkWindy" checked>
+                <label for="chkWindy" style="text-transform:none; font-weight:normal; cursor:pointer;">Näytä tuulivirtaus (Windy-animaatio)</label>
+            </div>
+
+            <div class="btn-group">
+                <button class="action-btn btn-danger" id="btnClear">Tyhjennä</button>
+                <button class="action-btn btn-secondary" id="btnReverse" disabled>Käännä</button>
+                <button class="action-btn btn-primary" id="btnFetch" disabled>Hae & Tallenna sää</button>
+            </div>
+        </div>
+
+        <button class="toggle-controls-btn" id="btnToggleControls">⚙️ Asetukset & Reitti ▲</button>
+    </div>
+</div>
+
+<!-- Info Modal Popup -->
+<div class="modal-overlay" id="infoModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title">Tiedot & Offline-käyttö</span>
+            <button class="modal-close" id="btnCloseModalX">&times;</button>
+        </div>
+        <div class="info-group">
+            <div class="info-item">
+                <span class="info-label">Offline-tila Merellä</span>
+                <span class="info-val">Hae sää satamassa verkkoyhteyden ollessa päällä. Sää- ja virtaustiedot tallennetaan automaattisesti laitteesi muistiin, ja ne ovat käytettävissä ilman verkkoyhteyttä.</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">GPS-Plotteri & Suuntaviiva</span>
+                <span class="info-val">Paina 📍-painiketta ottaaksesi GPS-seurannan käyttöön. Suuntaviiva osoittaa menosuuntasi (Heading/COG) 2 meripeninkulmaa eteenpäin.</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Asennus Puhelimeen (PWA)</span>
+                <span class="info-val">iOS Safari: <em>Jaa ➔ Lisää Koti-valikkoon</em>.<br>Android Chrome: <em>Valikko ➔ Asenna sovellus / Lisää aloitusnäyttöön</em>.</span>
+            </div>
+        </div>
+        <button class="btn-modal-close" id="btnCloseModalBtn">Sulje</button>
+    </div>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet Velocity JS -->
+<script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.js"></script>
+
+<script>
+    // --- PWA ASENNUS & SERVICE WORKER REKISTERÖINTI ---
+    if ('serviceWorker' in navigator) {
+        const swBlob = new Blob([`
+            const CACHE_NAME = 'merisaa-cache-v1';
+            const ASSETS = [
+                'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+                'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+                'https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.css',
+                'https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.js'
+            ];
+            self.addEventListener('install', e => {
+                e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
+            });
+            self.addEventListener('fetch', e => {
+                e.respondWith(
+                    caches.match(e.request).then(res => res || fetch(e.request).catch(() => caches.match(e.request)))
+                );
+            });
+        `], { type: 'application/javascript' });
+        
+        const swUrl = URL.createObjectURL(swBlob);
+        navigator.serviceWorker.register(swUrl).catch(err => console.log('SW reg error:', err));
+    }
+
+    // Dynaaminen Web App Manifesti koti-valikkoon lisäämistä varten
+    const manifestBlob = new Blob([JSON.stringify({
+        name: "Merisää & Reitti",
+        short_name: "Merisää",
+        start_url: window.location.href,
+        display: "standalone",
+        background_color: "#0f172a",
+        theme_color: "#0f172a",
+        icons: [{
+            src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛵</text></svg>",
+            sizes: "192x192 512x512",
+            type: "image/svg+xml"
+        }]
+    })], { type: 'application/json' });
+    const manifestLink = document.createElement('link');
+    manifestLink.rel = 'manifest';
+    manifestLink.href = URL.createObjectURL(manifestBlob);
+    document.head.appendChild(manifestLink);
+
+    // --- ALUSTUS ---
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('startTime').value = now.toISOString().slice(0,16);
+
+    const map = L.map('map').setView([63.45, 20.95], 8);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+        maxZoom: 18
+    }).addTo(map);
+
+    let waypoints = []; 
+    let markers = [];
+    let segmentSpeeds = []; 
+    let routeLayerGroup = L.featureGroup().addTo(map);
+    let boatMarker = null;
+    
+    let sampleRoutePointsData = [];
+    let weatherData = []; 
+    let marineData = [];
+
+    let gridWeatherData = [];
+    let gridBounds = null;
+    const GRID_SIZE = 9; 
+    let velocityLayer = null;
+    let activeMetric = null;
+
+    // --- GPS JA PLOTTERI-MUUTTUJAT ---
+    let gpsWatchId = null;
+    let userHeading = 0;
+    let gpsPos = null;
+    let gpsMarker = null;
+    let headingLineLayer = L.polyline([], {
+        color: '#ff0055',
+        weight: 3,
+        dashArray: '8, 6',
+        opacity: 0.95
+    }).addTo(map);
+
+    const boatIcon = L.divIcon({
+        html: '<div style="font-size:22px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.5));">⛵</div>',
+        className: 'boat-icon',
+        iconSize: [25, 25],
+        iconAnchor: [12, 12]
+    });
+
+    const waypointIcon = L.divIcon({
+        className: 'waypoint-marker',
+        html: '<div></div>',
+        iconSize: [14, 14],
+        iconAnchor: [7, 7]
+    });
+
+    // Ohjauspaneeli
+    const controlsDrawer = document.getElementById('controlsDrawer');
+    const btnToggleControls = document.getElementById('btnToggleControls');
+
+    function toggleControls(show) {
+        const isCollapsed = controlsDrawer.classList.contains('collapsed');
+        const shouldCollapse = show !== undefined ? !show : !isCollapsed;
+
+        if (shouldCollapse) {
+            controlsDrawer.classList.add('collapsed');
+            btnToggleControls.innerText = "⚙️ Näytä asetukset & reitti ▼";
+        } else {
+            controlsDrawer.classList.remove('collapsed');
+            btnToggleControls.innerText = "⚙️ Piilota asetukset ▲";
+        }
+    }
+    btnToggleControls.addEventListener('click', () => toggleControls());
+
+    // --- GPS PLOTTERIN TOIMINTA ---
+    function updateGpsPlotterIcon(heading) {
+        return L.divIcon({
+            className: 'gps-plotter-icon',
+            html: `<div class="gps-arrow" style="transform: rotate(${heading}deg);"></div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+    }
+
+    function calculateDestinationPoint(lat, lon, brng, distNM = 2.0) {
+        const R = 3440.065; // Maapallon säde NM
+        const d = distNM / R;
+        const lat1 = lat * Math.PI / 180;
+        const lon1 = lon * Math.PI / 180;
+        const b = brng * Math.PI / 180;
+
+        const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(b));
+        const lon2 = lon1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+
+        return [lat2 * 180 / Math.PI, lon2 * 180 / Math.PI];
+    }
+
+    function updatePlotterPosition(lat, lng, heading) {
+        gpsPos = [lat, lng];
+        userHeading = heading || userHeading;
+
+        if (!gpsMarker) {
+            gpsMarker = L.marker(gpsPos, { icon: updateGpsPlotterIcon(userHeading), zIndexOffset: 2000 }).addTo(map);
+        } else {
+            gpsMarker.setLatLng(gpsPos);
+            gpsMarker.setIcon(updateGpsPlotterIcon(userHeading));
+        }
+
+        // Pitkä suuntaviiva menosuuntaan (2 NM eteenpäin)
+        const targetPoint = calculateDestinationPoint(lat, lng, userHeading, 2.0);
+        headingLineLayer.setLatLngs([gpsPos, targetPoint]);
+    }
+
+    const btnGps = document.getElementById('btnGps');
+    btnGps.addEventListener('click', () => {
+        if (gpsWatchId !== null) {
+            navigator.geolocation.clearWatch(gpsWatchId);
+            gpsWatchId = null;
+            btnGps.classList.remove('active');
+            if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; }
+            headingLineLayer.setLatLngs([]);
+            document.getElementById('banner').innerText = "GPS-seuranta pysäytetty.";
+            return;
+        }
+
+        if (!('geolocation' in navigator)) {
+            alert("Laitteesi ei tue GPS-paikannusta.");
+            return;
+        }
+
+        btnGps.classList.add('active');
+        document.getElementById('banner').innerText = "Etsitään GPS-sijaintia...";
+
+        // Seurataan laitteen asentoa (kompassi)
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener('deviceorientation', (e) => {
+                if (e.webkitCompassHeading) {
+                    userHeading = e.webkitCompassHeading;
+                } else if (e.alpha) {
+                    userHeading = 360 - e.alpha;
+                }
+                if (gpsPos) updatePlotterPosition(gpsPos[0], gpsPos[1], userHeading);
+            });
+        }
+
+        gpsWatchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
+                    userHeading = pos.coords.heading;
+                }
+                updatePlotterPosition(lat, lng, userHeading);
+                map.setView([lat, lng], 13);
+                document.getElementById('banner').innerText = `GPS OK: Tarkkuus ±${Math.round(pos.coords.accuracy)}m`;
+            },
+            (err) => {
+                console.warn(err);
+                document.getElementById('banner').innerText = "GPS-virhe: Varmista luvat & HTTPS";
+            },
+            { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
+        );
+    });
+
+    // --- REITTIVÄRJÄYKSEN HALLINTA ---
+    function selectMetric(metricName) {
+        activeMetric = (activeMetric === metricName) ? null : metricName;
+        updateActiveMetricUI();
+        drawColoredRoute();
+    }
+
+    function updateActiveMetricUI() {
+        const metricMap = {
+            'total': 'box-time', 'wind': 'box-windspeed', 'angle': 'box-windangle',
+            'wave': 'box-waves', 'current': 'box-currents', 'weather': 'box-weather'
+        };
+        Object.values(metricMap).forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('active-metric');
+        });
+        if (activeMetric && metricMap[activeMetric]) {
+            document.getElementById(metricMap[activeMetric]).classList.add('active-metric');
+        }
+    }
+
+    document.getElementById('box-time').addEventListener('click', () => selectMetric('total'));
+    document.getElementById('box-windspeed').addEventListener('click', () => selectMetric('wind'));
+    document.getElementById('box-windangle').addEventListener('click', () => selectMetric('angle'));
+    document.getElementById('box-waves').addEventListener('click', () => selectMetric('wave'));
+    document.getElementById('box-currents').addEventListener('click', () => selectMetric('current'));
+    document.getElementById('box-weather').addEventListener('click', () => selectMetric('weather'));
+
+    function getStatColors(difficulty) {
+        const diff = Math.max(0, Math.min(1, difficulty));
+        const hue = (1 - diff) * 120;
+        return {
+            bg: `hsla(${hue}, 80%, 40%, 0.15)`,
+            border: `hsla(${hue}, 80%, 50%, 0.4)`,
+            text: `hsl(${hue}, 90%, 65%)`
+        };
+    }
+
+    function applyBoxColors(boxId, difficulty, includeArrow = null) {
+        const box = document.getElementById(boxId);
+        if (!box) return;
+        const colors = getStatColors(difficulty);
+        box.style.backgroundColor = colors.bg;
+        box.style.borderColor = colors.border;
+        const valElement = box.querySelector('.stat-val');
+        if (valElement) valElement.style.color = colors.text;
+        if (includeArrow) {
+            const arrow = document.getElementById(includeArrow);
+            if (arrow) arrow.style.color = colors.text;
+        }
+    }
+
+    function resetBoxColors() {
+        const boxes = ['box-time', 'box-windspeed', 'box-windangle', 'box-waves', 'box-currents', 'box-weather'];
+        boxes.forEach(id => {
+            const box = document.getElementById(id);
+            if (box) {
+                box.style.backgroundColor = 'transparent';
+                box.style.borderColor = 'transparent';
+                const valElement = box.querySelector('.stat-val');
+                if (valElement) valElement.style.color = '#38bdf8';
+            }
+        });
+        ['windArrow', 'waveArrow', 'currentArrow'].forEach(id => {
+            const arrow = document.getElementById(id);
+            if (arrow) arrow.style.color = '#f8fafc';
+        });
+    }
+
+    function getWeatherDescription(code) {
+        if (code === 0) return "Selkeää";
+        if (code === 1) return "Pääosin selkeää";
+        if (code === 2) return "Puolipilvistä";
+        if (code === 3) return "Pilvistä";
+        if (code === 45 || code === 48) return "Sumua";
+        if (code >= 51 && code <= 57) return "Tihkusadetta";
+        if (code >= 61 && code <= 67) return "Sadetta";
+        if (code >= 71 && code <= 77) return "Lumisadetta";
+        if (code >= 80 && code <= 82) return "Sadekuuroja";
+        if (code >= 85 && code <= 86) return "Lumikuuroja";
+        if (code >= 95) return "Ukkosta";
+        return "Tuntematon";
+    }
+
+    function calcDistanceNM(lat1, lon1, lat2, lon2) {
+        const R = 3440.065; 
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    function calcHeading(lat1, lon1, lat2, lon2) {
+        const f1 = lat1 * Math.PI / 180;
+        const f2 = lat2 * Math.PI / 180;
+        const dl = (lon2 - lon1) * Math.PI / 180;
+        const y = Math.sin(dl) * Math.cos(f2);
+        const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+        return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    function getPointOfSail(relAngle) {
+        if (relAngle < 40) return "Vastatuuli";
+        if (relAngle < 65) return "Tiukka kryssi";
+        if (relAngle < 110) return "Sivutuuli";
+        if (relAngle < 150) return "Avotuuli";
+        return "Myötätuuli";
+    }
+
+    function getExactRouteGeometry() {
+        if (waypoints.length < 2) return { totalDist: 0, totalHours: 0, segments: [] };
+        let segments = [];
+        let cumDist = 0;
+        let cumHours = 0;
+        const defaultSpeed = parseFloat(document.getElementById('speed').value) || 6.0;
+
+        for (let i = 0; i < waypoints.length - 1; i++) {
+            let p1 = waypoints[i];
+            let p2 = waypoints[i+1];
+            let dist = calcDistanceNM(p1.lat, p1.lng, p2.lat, p2.lng);
+            let speed = (segmentSpeeds[i] !== undefined && segmentSpeeds[i] !== null && !isNaN(segmentSpeeds[i])) ? segmentSpeeds[i] : defaultSpeed;
+            if (speed <= 0) speed = 1.0;
+            let segHours = dist / speed;
+
+            segments.push({
+                p1: p1, p2: p2, dist: dist, speed: speed, segHours: segHours,
+                startCumDist: cumDist,
+                endCumDist: cumDist + dist,
+                startCumHours: cumHours,
+                endCumHours: cumHours + segHours
+            });
+            cumDist += dist;
+            cumHours += segHours;
+        }
+        return { totalDist: cumDist, totalHours: cumHours, segments: segments };
+    }
+
+    function getExactPositionAtDistance(targetDist, geom) {
+        if (geom.segments.length === 0) return waypoints[0];
+        if (targetDist <= 0) return waypoints[0];
+        if (targetDist >= geom.totalDist) return waypoints[waypoints.length - 1];
+
+        let seg = geom.segments.find(s => targetDist >= s.startCumDist && targetDist <= s.endCumDist);
+        if (!seg) seg = geom.segments[geom.segments.length - 1];
+
+        if (seg.dist === 0) return seg.p1;
+
+        let ratio = (targetDist - seg.startCumDist) / seg.dist;
+        let lat = seg.p1.lat + ratio * (seg.p2.lat - seg.p1.lat);
+        let lng = seg.p1.lng + ratio * (seg.p2.lng - seg.p1.lng);
+        return { lat: lat, lng: lng };
+    }
+
+    function getConditionsAtProgress(progress) {
+        const geom = getExactRouteGeometry();
+        if (geom.segments.length === 0) return null;
+        
+        const startDate = new Date(document.getElementById('startTime').value);
+        const currentDist = geom.totalDist * progress;
+        const boatPos = getExactPositionAtDistance(currentDist, geom);
+
+        let hoursElapsed = 0;
+        let currentSegHeading = 0;
+
+        let seg = geom.segments.find(s => currentDist >= s.startCumDist && currentDist <= s.endCumDist);
+        if (!seg) seg = geom.segments[geom.segments.length - 1];
+
+        if (seg.dist > 0) {
+            const ratio = (currentDist - seg.startCumDist) / seg.dist;
+            hoursElapsed = seg.startCumHours + ratio * seg.segHours;
+            currentSegHeading = calcHeading(seg.p1.lat, seg.p1.lng, seg.p2.lat, seg.p2.lng);
+        } else {
+            hoursElapsed = seg.startCumHours;
+        }
+
+        const curDate = new Date(startDate.getTime() + hoursElapsed * 3600 * 1000);
+        
+        if (weatherData.length === 0 || marineData.length === 0) {
+            return { pos: boatPos };
+        }
+
+        const sampleIdx = Math.min(Math.floor(progress * sampleRoutePointsData.length), sampleRoutePointsData.length - 1);
+        const pointWeather = weatherData[sampleIdx]?.hourly;
+        const pointMarine = marineData[sampleIdx]?.hourly;
+
+        if (!pointWeather) return { pos: boatPos };
+
+        const targetISO = curDate.toISOString().slice(0, 13) + ":00";
+        let timeIdx = pointWeather.time.findIndex(t => t.startsWith(targetISO));
+        if (timeIdx === -1) timeIdx = 0;
+
+        const windSpeed = pointWeather.wind_speed_10m[timeIdx] || 0;
+        const windDir = pointWeather.wind_direction_10m[timeIdx] || 0;
+        const waveHeight = pointMarine && pointMarine.wave_height && pointMarine.wave_height[timeIdx] !== null ? pointMarine.wave_height[timeIdx] : 0;
+        const currentVelMS = pointMarine && pointMarine.ocean_current_velocity && pointMarine.ocean_current_velocity[timeIdx] !== null ? pointMarine.ocean_current_velocity[timeIdx] : 0;
+        const currentDir = pointMarine && pointMarine.ocean_current_direction && pointMarine.ocean_current_direction[timeIdx] !== null ? pointMarine.ocean_current_direction[timeIdx] : 0;
+        const weatherCode = pointWeather.weather_code ? pointWeather.weather_code[timeIdx] : 0;
+        
+        let relAngle = Math.abs(windDir - currentSegHeading) % 360;
+        if (relAngle > 180) relAngle = 360 - relAngle;
+        relAngle = Math.round(relAngle);
+        
+        let angleDiff = 0;
+        if (relAngle <= 45) angleDiff = 1.0; 
+        else if (relAngle < 65) angleDiff = 1.0 - ((relAngle - 45) / 20); 
+        else if (relAngle < 150) angleDiff = 0.0; 
+        else angleDiff = 0.2; 
+
+        let windDiff = 0;
+        if (windSpeed < 2.5) windDiff = 0.5; 
+        else if (windSpeed > 12) windDiff = Math.min(1.0, (windSpeed - 12) / 6); 
+        else if (windSpeed > 8) windDiff = (windSpeed - 8) / 8; 
+        else windDiff = 0.0; 
+
+        let waveDiff = Math.min(1.0, waveHeight / 2.0); 
+
+        let relCurrentAngle = Math.abs(currentDir - currentSegHeading) % 360;
+        if (relCurrentAngle > 180) relCurrentAngle = 360 - relCurrentAngle;
+        let currentFactor = relCurrentAngle < 90 ? 1 : 0; 
+        let currentKnots = currentVelMS * 1.94384;
+        let currentDiff = currentFactor * Math.min(1.0, currentKnots / 1.5); 
+
+        let weatherDiff = 0;
+        if (weatherCode >= 95) weatherDiff = 1.0; 
+        else if (weatherCode >= 61 || weatherCode == 45 || weatherCode == 48) weatherDiff = 0.6; 
+        
+        let totalDiff = (angleDiff * 1.5 + windDiff + waveDiff + currentDiff + weatherDiff * 0.5) / 5;
+        totalDiff = Math.max(0, Math.min(1, totalDiff));
+
+        return {
+            pos: boatPos, curDate, timeIdx, pointWeather, pointMarine, currentDist,
+            windSpeed, windDir, waveHeight, waveDir: pointMarine?.wave_direction?.[timeIdx]||0,
+            currentVelMS, currentDir, weatherCode, rain: pointWeather.precipitation?.[timeIdx]||0,
+            gustSpeed: pointWeather.wind_gusts_10m?.[timeIdx]||0,
+            tempC: pointWeather.temperature_2m?.[timeIdx]||0,
+            relAngle, currentSegHeading, currentKnots, 
+            diffs: { total: totalDiff, wind: windDiff, angle: angleDiff, wave: waveDiff, current: currentDiff, weather: weatherDiff }
+        };
+    }
+
+    function drawColoredRoute() {
+        if (routeLayerGroup) routeLayerGroup.clearLayers();
+        if (waypoints.length < 2) return;
+
+        if (weatherData.length === 0 || !activeMetric) {
+            L.polyline(waypoints, {color: '#0284c7', weight: 4, opacity: 0.85}).addTo(routeLayerGroup);
+            return;
+        }
+
+        const steps = 60;
+        let prevPos = waypoints[0];
+        
+        for (let i = 1; i <= steps; i++) {
+            let progress = i / steps;
+            let cond = getConditionsAtProgress(progress);
+            if (!cond || !cond.diffs) continue;
+            
+            let diff = cond.diffs[activeMetric];
+            let hue = (1 - diff) * 120;
+            let color = `hsl(${hue}, 90%, 45%)`;
+            
+            L.polyline([prevPos, cond.pos], {
+                color: color,
+                weight: 5,
+                opacity: 0.95
+            }).addTo(routeLayerGroup);
+            
+            prevPos = cond.pos;
+        }
+    }
+
+    function updateRouteAndSave() {
+        const btnFetch = document.getElementById('btnFetch');
+        const btnReverse = document.getElementById('btnReverse');
+
+        if (waypoints.length < 2) {
+            btnFetch.disabled = true;
+            btnReverse.disabled = true;
+            document.getElementById('banner').innerText = "Klikkaa karttaa lisätäksesi reittipisteitä.";
+        } else {
+            const geom = getExactRouteGeometry();
+            btnFetch.disabled = false;
+            btnReverse.disabled = false;
+            document.getElementById('banner').innerText = `Reitti: ${waypoints.length} pistettä (${geom.totalDist.toFixed(1)} NM)`;
+        }
+
+        const coords = waypoints.map(w => ({ lat: w.lat, lng: w.lng }));
+        const saveData = {
+            waypoints: coords,
+            speeds: segmentSpeeds
+        };
+        localStorage.setItem('sailingRouteData', JSON.stringify(saveData));
+        rebuildMarkers();
+    }
+
+    function createMarker(latlng, idx) {
+        const marker = L.marker(latlng, {
+            icon: waypointIcon,
+            draggable: true
+        }).addTo(map);
+
+        marker.on('drag', (e) => {
+            const index = markers.indexOf(marker);
+            waypoints[index] = e.target.getLatLng();
+            drawColoredRoute();
+        });
+
+        marker.on('dragend', () => {
+            updateRouteAndSave();
+        });
+
+        updatePopupContent(marker, idx);
+        markers.push(marker);
+        return marker;
+    }
+
+    function updatePopupContent(marker, idx) {
+        const defaultSpeed = parseFloat(document.getElementById('speed').value) || 6.0;
+        const currentSpeed = (segmentSpeeds[idx] !== undefined && segmentSpeeds[idx] !== null) ? segmentSpeeds[idx] : defaultSpeed;
+        
+        let popupHtml = `<div style="font-family: sans-serif; color: #0f172a; min-width: 140px; text-align: center;">`;
+        popupHtml += `<strong>Piste ${idx + 1}</strong><br>`;
+        
+        if (idx < waypoints.length - 1) {
+            popupHtml += `<div style="margin: 6px 0; font-size: 11px;">
+                Osion nopeus:<br>
+                <input type="number" id="segSpeed_${idx}" value="${currentSpeed}" step="0.5" min="0.5" style="width: 55px; padding: 2px 4px; border: 1px solid #ccc; border-radius: 4px; text-align: center;"> kn
+            </div>`;
+        }
+        
+        popupHtml += `<button id="btnDel_${idx}" style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; margin-top: 2px;">Poista piste</button>`;
+        popupHtml += `</div>`;
+
+        marker.bindPopup(popupHtml);
+
+        marker.on('popupopen', () => {
+            const btnDel = document.getElementById(`btnDel_${idx}`);
+            if (btnDel) {
+                btnDel.onclick = () => removeWaypoint(idx);
+            }
+            const speedInput = document.getElementById(`segSpeed_${idx}`);
+            if (speedInput) {
+                speedInput.onchange = (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val > 0) {
+                        segmentSpeeds[idx] = val;
+                        updateRouteAndSave();
+                        if (weatherData.length > 0) {
+                            updateSimulation(document.getElementById('routeSlider').value / 100);
+                        }
+                    }
+                };
+            }
+        });
+    }
+
+    function rebuildMarkers() {
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+        waypoints.forEach((wp, idx) => {
+            createMarker(wp, idx);
+        });
+        drawColoredRoute();
+    }
+
+    function removeWaypoint(idx) {
+        if (idx > -1 && idx < waypoints.length) {
+            waypoints.splice(idx, 1);
+            if (segmentSpeeds.length > idx) segmentSpeeds.splice(idx, 1);
+            updateRouteAndSave();
+        }
+    }
+
+    map.on('click', (e) => {
+        waypoints.push(e.latlng);
+        updateRouteAndSave();
+    });
+
+    // --- REITTIDATAN & SÄÄN LATAUS OFFLINE-MUISTISTA ---
+    function loadSavedOfflineData() {
+        const savedRoute = localStorage.getItem('sailingRouteData');
+        if (savedRoute) {
+            try {
+                const parsed = JSON.parse(savedRoute);
+                let coords = parsed.waypoints || (Array.isArray(parsed) ? parsed : []);
+                segmentSpeeds = parsed.speeds || [];
+                if (coords && coords.length > 0) {
+                    coords.forEach(c => waypoints.push(L.latLng(c.lat, c.lng)));
+                    if (waypoints.length > 1) {
+                        map.fitBounds(L.latLngBounds(waypoints).pad(0.1));
+                    }
+                    updateRouteAndSave();
+                }
+            } catch (e) { console.error("Reitin lataus epäonnistui", e); }
+        }
+
+        // Ladataan aiempi sää offline-tilasta
+        const savedWeather = localStorage.getItem('offlineWeatherData');
+        if (savedWeather) {
+            try {
+                const cache = JSON.parse(savedWeather);
+                weatherData = cache.weatherData || [];
+                marineData = cache.marineData || [];
+                gridWeatherData = cache.gridWeatherData || [];
+                gridBounds = cache.gridBounds || null;
+                sampleRoutePointsData = cache.sampleRoutePointsData || [];
+
+                if (weatherData.length > 0) {
+                    document.getElementById('routeSlider').disabled = false;
+                    document.getElementById('banner').innerText = "Tallennettu sää ladattu offline-muistista!";
+                    updateSimulation(0);
+                    drawColoredRoute();
+                }
+            } catch (e) { console.error("Offline-sään lataus epäonnistui", e); }
+        }
+    }
+    loadSavedOfflineData();
+
+    document.getElementById('btnReverse').addEventListener('click', () => {
+        if (waypoints.length < 2) return;
+        waypoints.reverse();
+        if (segmentSpeeds.length > 0) segmentSpeeds.reverse();
+        updateRouteAndSave();
+        if (weatherData.length > 0) document.getElementById('btnFetch').click();
+    });
+
+    document.getElementById('speed').addEventListener('input', () => {
+        updateRouteAndSave();
+        if (weatherData.length > 0) {
+            updateSimulation(document.getElementById('routeSlider').value / 100);
+        }
+    });
+
+    document.getElementById('btnClear').addEventListener('click', () => {
+        waypoints = [];
+        segmentSpeeds = [];
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+        routeLayerGroup.clearLayers();
+        if (boatMarker) { map.removeLayer(boatMarker); boatMarker = null; }
+        if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
+        activeMetric = null;
+        localStorage.removeItem('sailingRouteData');
+        localStorage.removeItem('offlineWeatherData');
+        updateActiveMetricUI();
+        updateRouteAndSave(); 
+        resetWeatherDisplay();
+        toggleControls(true);
+    });
+
+    function resetWeatherDisplay() {
+        document.getElementById('timeVal').innerText = "--:--";
+        document.getElementById('distVal').innerText = "0.0 NM";
+        document.getElementById('windSpeedVal').innerText = "--";
+        document.getElementById('gustVal').innerText = "Puuska: --";
+        document.getElementById('windDirVal').innerText = "--°";
+        document.getElementById('relWindVal').innerText = "--";
+        document.getElementById('windArrow').style.transform = 'rotate(0deg)';
+        document.getElementById('waveHeightVal').innerText = "-- m";
+        document.getElementById('waveDirVal').innerText = "--°";
+        document.getElementById('waveArrow').style.transform = 'rotate(0deg)';
+        document.getElementById('currentSpeedVal').innerText = "-- kn";
+        document.getElementById('currentDirVal').innerText = "--°";
+        document.getElementById('currentArrow').style.transform = 'rotate(0deg)';
+        document.getElementById('tempVal').innerText = "-- °C";
+        document.getElementById('weatherDescVal').innerText = "--";
+        resetBoxColors(); 
+    }
+
+    function generateWeatherSamplePoints(geom, numSamples = 12) {
+        let samplePoints = [];
+        for (let i = 0; i < numSamples; i++) {
+            let targetDist = (i / (numSamples - 1)) * geom.totalDist;
+            let pos = getExactPositionAtDistance(targetDist, geom);
+            samplePoints.push({ lat: pos.lat, lng: pos.lng, distFromStart: targetDist });
+        }
+        return samplePoints;
+    }
+
+    function createGridForRoute() {
+        const lats = waypoints.map(w => w.lat);
+        const lons = waypoints.map(w => w.lng);
+        const pad = 0.3; 
+        const minLat = Math.min(...lats) - pad;
+        const maxLat = Math.max(...lats) + pad;
+        const minLon = Math.min(...lons) - pad;
+        const maxLon = Math.max(...lons) + pad;
+
+        let gridPoints = [];
+        for (let i = 0; i < GRID_SIZE; i++) {
+            let lat = maxLat - (i / (GRID_SIZE - 1)) * (maxLat - minLat);
+            for (let j = 0; j < GRID_SIZE; j++) {
+                let lon = minLon + (j / (GRID_SIZE - 1)) * (maxLon - minLon);
+                gridPoints.push({ lat: lat, lng: lon });
+            }
+        }
+        gridBounds = { minLat, maxLat, minLon, maxLon };
+        return gridPoints;
+    }
+
+    // --- SÄÄN HAKU & AUTOMAATTINEN OFFLINE-TALLENNUS ---
+    document.getElementById('btnFetch').addEventListener('click', async () => {
+        const geom = getExactRouteGeometry();
+        if (geom.segments.length === 0) return;
+
+        sampleRoutePointsData = generateWeatherSamplePoints(geom, 12);
+        const lats = sampleRoutePointsData.map(p => p.lat.toFixed(4)).join(',');
+        const lons = sampleRoutePointsData.map(p => p.lng.toFixed(4)).join(',');
+
+        const gridPoints = createGridForRoute();
+        const gridLats = gridPoints.map(p => p.lat.toFixed(4)).join(',');
+        const gridLons = gridPoints.map(p => p.lng.toFixed(4)).join(',');
+
+        document.getElementById('banner').innerText = "Haetaan ja tallennetaan säätietoja...";
+
+        try {
+            const urlWind = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601`;
+            const urlMarine = `https://marine-api.open-meteo.com/v1/marine?latitude=${lats}&longitude=${lons}&hourly=wave_height,wave_direction,ocean_current_velocity,ocean_current_direction&timeformat=iso8601`;
+            const urlGridWind = `https://api.open-meteo.com/v1/forecast?latitude=${gridLats}&longitude=${gridLons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=iso8601`;
+
+            const [resWind, resMarine, resGridWind] = await Promise.all([
+                fetch(urlWind), 
+                fetch(urlMarine),
+                fetch(urlGridWind)
+            ]);
+            
+            const dataWind = await resWind.json();
+            const dataMarine = await resMarine.json();
+            const dataGridWind = await resGridWind.json();
+
+            weatherData = Array.isArray(dataWind) ? dataWind : [dataWind];
+            marineData = Array.isArray(dataMarine) ? dataMarine : [dataMarine];
+            gridWeatherData = Array.isArray(dataGridWind) ? dataGridWind : [dataGridWind];
+
+            // TALLENNETAAN LAITTEEN OFFLINE-MUISTIIN
+            const offlinePayload = {
+                savedAt: new Date().toISOString(),
+                weatherData,
+                marineData,
+                gridWeatherData,
+                gridBounds,
+                sampleRoutePointsData
+            };
+            localStorage.setItem('offlineWeatherData', JSON.stringify(offlinePayload));
+
+            document.getElementById('routeSlider').disabled = false;
+            document.getElementById('routeSlider').value = 0;
+            document.getElementById('banner').innerText = "Sää haettu ja tallennettu offline-käyttöön!";
+            
+            updateSimulation(0);
+            drawColoredRoute();
+            toggleControls(false);
+
+        } catch (err) {
+            console.error(err);
+            document.getElementById('banner').innerText = "Verkkovirhe: Tarkista yhteys tai käytä vanhaa offline-säätä";
+        }
+    });
+
+    document.getElementById('routeSlider').addEventListener('input', (e) => {
+        updateSimulation(e.target.value / 100);
+    });
+
+    document.getElementById('chkWindy').addEventListener('change', (e) => {
+        if (!e.target.checked && velocityLayer) {
+            map.removeLayer(velocityLayer);
+        } else if (e.target.checked && weatherData.length > 0) {
+            updateSimulation(document.getElementById('routeSlider').value / 100);
+        }
+    });
+
+    function updateWindVelocityLayer(timeIdx) {
+        if (!document.getElementById('chkWindy').checked || gridWeatherData.length === 0 || !gridBounds) {
+            if (velocityLayer) map.removeLayer(velocityLayer);
+            return;
+        }
+
+        let uData = [];
+        let vData = [];
+
+        for (let i = 0; i < gridWeatherData.length; i++) {
+            let speed = gridWeatherData[i].hourly.wind_speed_10m[timeIdx] || 0;
+            let dir = gridWeatherData[i].hourly.wind_direction_10m[timeIdx] || 0;
+
+            let rad = dir * Math.PI / 180;
+            let u = -speed * Math.sin(rad);
+            let v = -speed * Math.cos(rad);
+
+            uData.push(u);
+            vData.push(v);
+        }
+
+        const dx = (gridBounds.maxLon - gridBounds.minLon) / (GRID_SIZE - 1);
+        const dy = (gridBounds.maxLat - gridBounds.minLat) / (GRID_SIZE - 1);
+
+        const velocityData = [
+            {
+                header: {
+                    parameterCategory: 2, parameterNumber: 2, parameterTemplate: 0, scanMode: 0,
+                    nx: GRID_SIZE, ny: GRID_SIZE,
+                    lo1: gridBounds.minLon, la1: gridBounds.maxLat, lo2: gridBounds.maxLon, la2: gridBounds.minLat,
+                    dx: dx, dy: dy
+                },
+                data: uData
+            },
+            {
+                header: {
+                    parameterCategory: 2, parameterNumber: 3, parameterTemplate: 0, scanMode: 0,
+                    nx: GRID_SIZE, ny: GRID_SIZE,
+                    lo1: gridBounds.minLon, la1: gridBounds.maxLat, lo2: gridBounds.maxLon, la2: gridBounds.minLat,
+                    dx: dx, dy: dy
+                },
+                data: vData
+            }
+        ];
+
+        if (velocityLayer) {
+            map.removeLayer(velocityLayer);
+        }
+
+        velocityLayer = L.velocityLayer({
+            displayValues: false,
+            data: velocityData,
+            maxVelocity: 22,
+            velocityScale: 0.015,
+            particleAge: 90,
+            particleMultiplier: 0.005,
+            lineWidth: 2,
+            colorScale: [
+                "rgba(56, 189, 248, 0.7)", "rgba(2, 132, 199, 0.8)", "rgba(16, 185, 129, 0.85)", "rgba(245, 158, 11, 0.9)", "rgba(239, 68, 68, 1.0)"
+            ]
+        });
+
+        velocityLayer.addTo(map);
+    }
+
+    function updateSimulation(progress) {
+        if (waypoints.length < 2) return;
+
+        let cond = getConditionsAtProgress(progress);
+        if (!cond) return;
+
+        if (!boatMarker) {
+            boatMarker = L.marker([cond.pos.lat, cond.pos.lng], {icon: boatIcon}).addTo(map);
+        } else {
+            boatMarker.setLatLng([cond.pos.lat, cond.pos.lng]);
+        }
+
+        if (weatherData.length === 0 || marineData.length === 0 || !cond.diffs) return;
+
+        updateWindVelocityLayer(cond.timeIdx);
+
+        const geom = getExactRouteGeometry();
+        const windKnots = (cond.windSpeed * 1.94384).toFixed(1);
+        const sailPoint = getPointOfSail(cond.relAngle);
+
+        document.getElementById('timeVal').innerText = cond.curDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        document.getElementById('distVal').innerText = `${cond.currentDist.toFixed(1)} / ${geom.totalDist.toFixed(1)} NM`;
+        
+        document.getElementById('windSpeedVal').innerText = `${cond.windSpeed.toFixed(1)} m/s (${windKnots} kn)`;
+        document.getElementById('gustVal').innerText = `Puuska: ${cond.gustSpeed.toFixed(1)} m/s`;
+        
+        document.getElementById('windDirVal').innerText = `Tosi: ${Math.round(cond.windDir)}°`;
+        document.getElementById('relWindVal').innerText = `${cond.relAngle}° (${sailPoint})`;
+        document.getElementById('windArrow').style.transform = `rotate(${cond.windDir + 180}deg)`;
+
+        document.getElementById('waveHeightVal').innerText = `${cond.waveHeight.toFixed(1)} m`;
+        document.getElementById('waveDirVal').innerText = `${Math.round(cond.waveDir)}°`;
+        document.getElementById('waveArrow').style.transform = `rotate(${cond.waveDir + 180}deg)`;
+
+        document.getElementById('currentSpeedVal').innerText = `${cond.currentKnots.toFixed(1)} kn (${cond.currentVelMS.toFixed(1)} m/s)`;
+        document.getElementById('currentDirVal').innerText = `${Math.round(cond.currentDir)}°`;
+        document.getElementById('currentArrow').style.transform = `rotate(${cond.currentDir + 180}deg)`;
+
+        document.getElementById('tempVal').innerText = `${cond.tempC.toFixed(1)} °C`;
+        
+        let weatherText = getWeatherDescription(cond.weatherCode);
+        if (cond.rain > 0) weatherText += ` (${cond.rain.toFixed(1)} mm)`;
+        document.getElementById('weatherDescVal').innerText = weatherText;
+
+        applyBoxColors('box-time', cond.diffs.total);
+        applyBoxColors('box-windspeed', cond.diffs.wind);
+        applyBoxColors('box-windangle', cond.diffs.angle, 'windArrow');
+        applyBoxColors('box-waves', cond.diffs.wave, 'waveArrow');
+        applyBoxColors('box-currents', cond.diffs.current, 'currentArrow');
+        applyBoxColors('box-weather', cond.diffs.weather);
+    }
+
+    const modal = document.getElementById('infoModal');
+    document.getElementById('btnInfo').addEventListener('click', () => modal.classList.add('active'));
+    document.getElementById('btnCloseModalX').addEventListener('click', () => modal.classList.remove('active'));
+    document.getElementById('btnCloseModalBtn').addEventListener('click', () => modal.classList.remove('active'));
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.classList.remove('active');
+    });
+</script>
+</body>
+</html>
