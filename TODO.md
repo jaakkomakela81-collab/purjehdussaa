@@ -16,3 +16,6 @@
       käsinsyöttöä, ei korvaa sitä.
 - [ ] Tarkista selaimessa myös "Ehdota paras lähtöaika": ehdotuksen järkevyys, liu'un 0–7 vrk
       -toiminta, ja tapaus jossa ennustedataa ei ole vielä haettu
+- [x] Vuorokaudenajan valinta "Ehdota paras lähtöaika" -hakuun (Mikä tahansa/Aamuyö/Aamupäivä/
+      Iltapäivä/Ilta), Käännä-nappi siirtää veneen heti reitin uuteen alkuun, ja Hae sää -painike
+      sulkee asetuspaneelin automaattisesti onnistuneen haun jälkeen
