@@ -544,7 +544,7 @@
       return points;
     }
 
-    function createRouteBounds(pad = 0.4) {
+    function createRouteBounds(pad = 0.8) {
       if (waypoints.length === 0) return null;
       const lats = waypoints.map(w => w.lat);
       const lons = waypoints.map(w => w.lng);
@@ -874,7 +874,7 @@
         const radar = data?.radar?.past;
         if (!radar || radar.length === 0) return;
         const latest = radar[radar.length - 1];
-        radarLayer = L.tileLayer(`${data.host}${latest.path}/256/{z}/{x}/{y}/2/1_1.png`, { opacity: 0.7, zIndex: 500, maxNativeZoom: 12 }).addTo(map);
+        radarLayer = L.tileLayer(`${data.host}${latest.path}/256/{z}/{x}/{y}/2/1_1.png`, { opacity: 0.7, zIndex: 500, maxNativeZoom: 7 }).addTo(map);
       } catch (error) {
         console.error('Sadetutka virhe:', error);
       }
@@ -935,7 +935,7 @@
       if (waypoints.length < 2) return;
       const geom = getExactRouteGeometry();
       sampleRoutePointsData = generateSampleRoutePoints(geom, 12);
-      gridBounds = createRouteBounds(0.4);
+      gridBounds = createRouteBounds(0.8);
       const gridPoints = createGridPoints(gridBounds, GRID_SIZE);
 
       setBanner('Ladataan sää- ja virtaustietoja...');
