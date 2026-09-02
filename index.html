@@ -30,6 +30,16 @@
     }
     .map-btn:hover { background: #334155; color: white; }
     .map-btn.active { background: #0284c7; color: white; border-color: #38bdf8; }
+    .route-menu {
+      position: absolute; top: 60px; right: 12px; width: min(280px, calc(100vw - 24px)); padding: 10px; display: none; flex-direction: column; gap: 8px;
+      background: rgba(30, 41, 59, .98); border: 1px solid #475569; border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,.45); z-index: 1500;
+    }
+    .route-menu.active { display: flex; }
+    .route-menu h2 { margin: 0 0 2px; font-size: 13px; color: #38bdf8; }
+    .route-menu select, .route-menu button { width: 100%; min-height: 32px; }
+    .route-menu button { border: 0; border-radius: 6px; background: #334155; color: #f8fafc; cursor: pointer; font-size: 11px; font-weight: 700; }
+    .route-menu button.primary { background: #0284c7; }
+    .route-menu .menu-status { color: #94a3b8; font-size: 10px; line-height: 1.35; }
 
     .panel {
       background: #1e293b; border-top: 1px solid #334155; box-shadow: 0 -4px 15px rgba(0,0,0,.35); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
@@ -122,8 +132,20 @@
     <div class="info-banner" id="banner">Klikkaa karttaa lisätäksesi reittipisteitä.</div>
 
     <div class="map-floating-controls">
-      <button class="map-btn" id="btnInfo" title="Tietoa">ℹ</button>
+      <button class="map-btn" id="btnMenu" title="Reitit ja info">⋮</button>
       <button class="map-btn" id="btnGps" title="GPS-seuranta">📍</button>
+    </div>
+
+    <div class="route-menu" id="routeMenu">
+      <h2>Reitit</h2>
+      <button class="primary" id="btnNewRoute">+ Uusi reitti</button>
+      <button id="btnSaveRoute">Tallenna nykyinen reitti</button>
+      <select id="savedRouteSelect" aria-label="Tallennetut reitit">
+        <option value="">Valitse tallennettu reitti</option>
+      </select>
+      <button id="btnLoadRoute">Lataa valittu reitti</button>
+      <button id="btnOpenInfo">i Tietoa ja lähteet</button>
+      <div class="menu-status" id="routeMenuStatus">Reitti tallentuu automaattisesti tämän laitteen selaimeen.</div>
     </div>
 
     <div id="map"></div>
@@ -221,6 +243,10 @@
           <span class="info-label">⏱️ GPS ja reitti</span>
           <span class="info-val">Lähtöaika ohjaa venettä eteenpäin. GPS:n ollessa käytössä näytetään, jääkö vene jälkeen reitistä.</span>
         </div>
+        <div class="info-item">
+          <span class="info-label">Lähteet</span>
+          <span class="info-val">Kartta: OpenStreetMap ja OpenSeaMap. Sää ja tuuli: Open-Meteo Forecast API. Meridata: Open-Meteo Marine API. Sadetutka: RainViewer. Animaatio: Leaflet Velocity.</span>
+        </div>
       </div>
       <button class="btn-modal-close" id="btnCloseModalBtn">Sulje</button>
     </div>
@@ -283,6 +309,148 @@
 
     function setBanner(message) {
       document.getElementById('banner').textContent = message;
+    }
+
+    const ROUTE_LIBRARY_KEY = 'sailingRouteLibrary';
+
+    function readRouteLibrary() {
+      try {
+        const routes = JSON.parse(localStorage.getItem(ROUTE_LIBRARY_KEY) || '[]');
+        return Array.isArray(routes) ? routes : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function refreshRouteLibrary() {
+      const select = document.getElementById('savedRouteSelect');
+      select.innerHTML = '<option value="">Valitse tallennettu reitti</option>';
+      readRouteLibrary().forEach(route => {
+        const option = document.createElement('option');
+        option.value = route.id;
+        option.textContent = `${route.name} (${route.waypoints.length} pistettä)`;
+        select.appendChild(option);
+      });
+    }
+
+    function saveRouteToLibrary() {
+      if (waypoints.length < 2) {
+        setBanner('Lisää vähintään kaksi reittipistettä ennen tallennusta.');
+        return;
+      }
+      const name = window.prompt('Anna reitille nimi:', `Reitti ${new Date().toLocaleDateString('fi-FI')}`);
+      if (!name || !name.trim()) return;
+      const routes = readRouteLibrary();
+      routes.unshift({
+        id: `route-${Date.now()}`,
+        name: name.trim(),
+        waypoints: waypoints.map(point => ({ lat: point.lat, lng: point.lng })),
+        speeds: segmentSpeeds.slice(),
+        savedAt: new Date().toISOString()
+      });
+      localStorage.setItem(ROUTE_LIBRARY_KEY, JSON.stringify(routes.slice(0, 20)));
+      refreshRouteLibrary();
+      setBanner(`Reitti tallennettu: ${name.trim()}`);
+    }
+
+    function loadRouteFromLibrary() {
+      const routeId = document.getElementById('savedRouteSelect').value;
+      const route = readRouteLibrary().find(item => item.id === routeId);
+      if (!route) {
+        setBanner('Valitse ensin tallennettu reitti.');
+        return;
+      }
+      document.getElementById('btnClear').click();
+      waypoints = route.waypoints.map(point => L.latLng(point.lat, point.lng));
+      segmentSpeeds = Array.isArray(route.speeds) ? route.speeds.slice() : [];
+      if (waypoints.length > 1) map.fitBounds(L.latLngBounds(waypoints).pad(0.1));
+      updateRouteAndSave();
+      document.getElementById('routeMenu').classList.remove('active');
+      setBanner(`Reitti ladattu: ${route.name}`);
+    }
+
+    const ROUTE_LIBRARY_KEY = 'sailingRouteLibrary';
+
+    function readRouteLibrary() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(ROUTE_LIBRARY_KEY) || '[]');
+        return Array.isArray(saved) ? saved : [];
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function refreshRouteLibrary() {
+      const select = document.getElementById('savedRouteSelect');
+      if (!select) return;
+      select.innerHTML = '<option value="">Valitse tallennettu reitti</option>';
+      readRouteLibrary().forEach(route => {
+        const option = document.createElement('option');
+        option.value = route.id;
+        option.textContent = `${route.name} (${route.waypoints.length} pistettä)`;
+        select.appendChild(option);
+      });
+    }
+
+    function clearRouteState(removeCurrentSave = false) {
+      waypoints = [];
+      segmentSpeeds = [];
+      markers.forEach(marker => map.removeLayer(marker));
+      markers = [];
+      routeLayerGroup.clearLayers();
+      if (rainLayerGroup) rainLayerGroup.clearLayers();
+      if (boatMarker) { map.removeLayer(boatMarker); boatMarker = null; }
+      if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
+      if (radarLayer) { map.removeLayer(radarLayer); radarLayer = null; }
+      weatherData = [];
+      marineData = [];
+      gridWeatherData = [];
+      gridMarineData = [];
+      sampleRoutePointsData = [];
+      gridBounds = null;
+      forecastMaxTime = null;
+      activeMetric = null;
+      updateActiveMetricUi();
+      resetWeatherDisplay();
+      document.getElementById('routeSlider').disabled = true;
+      document.getElementById('routeSlider').value = 0;
+      if (removeCurrentSave) localStorage.removeItem('sailingRouteData');
+    }
+
+    function saveRouteToLibrary() {
+      if (waypoints.length < 2) {
+        setBanner('Lisää vähintään kaksi reittipistettä ennen tallennusta.');
+        return;
+      }
+      const name = window.prompt('Anna reitille nimi:', `Reitti ${new Date().toLocaleDateString('fi-FI')}`);
+      if (!name || !name.trim()) return;
+      const routes = readRouteLibrary();
+      routes.unshift({
+        id: `route-${Date.now()}`,
+        name: name.trim(),
+        waypoints: waypoints.map(point => ({ lat: point.lat, lng: point.lng })),
+        speeds: segmentSpeeds.slice(),
+        savedAt: new Date().toISOString()
+      });
+      localStorage.setItem(ROUTE_LIBRARY_KEY, JSON.stringify(routes.slice(0, 20)));
+      refreshRouteLibrary();
+      setBanner(`Reitti tallennettu: ${name.trim()}`);
+    }
+
+    function loadRouteFromLibrary() {
+      const id = document.getElementById('savedRouteSelect').value;
+      const route = readRouteLibrary().find(item => item.id === id);
+      if (!route) {
+        setBanner('Valitse ensin tallennettu reitti.');
+        return;
+      }
+      clearRouteState(true);
+      waypoints = route.waypoints.map(point => L.latLng(point.lat, point.lng));
+      segmentSpeeds = Array.isArray(route.speeds) ? route.speeds.slice() : [];
+      if (waypoints.length > 1) map.fitBounds(L.latLngBounds(waypoints).pad(0.1));
+      updateRouteAndSave();
+      document.getElementById('routeMenu').classList.remove('active');
+      setBanner(`Reitti ladattu: ${route.name}`);
     }
 
     function toggleControls() {
@@ -872,6 +1040,21 @@
 
     document.getElementById('btnFetch').addEventListener('click', fetchWeatherData);
 
+    document.getElementById('btnMenu').addEventListener('click', () => {
+      document.getElementById('routeMenu').classList.toggle('active');
+    });
+    document.getElementById('btnNewRoute').addEventListener('click', () => {
+      document.getElementById('btnClear').click();
+      document.getElementById('routeMenu').classList.remove('active');
+      setBanner('Uusi reitti: klikkaa karttaa lisätäksesi pisteitä.');
+    });
+    document.getElementById('btnSaveRoute').addEventListener('click', saveRouteToLibrary);
+    document.getElementById('btnLoadRoute').addEventListener('click', loadRouteFromLibrary);
+    document.getElementById('btnOpenInfo').addEventListener('click', () => {
+      document.getElementById('routeMenu').classList.remove('active');
+      document.getElementById('infoModal').classList.add('active');
+    });
+
     function advanceRouteLive() {
       if (!document.getElementById('chkRealtime').checked || waypoints.length < 2) return;
       const routeGeom = getExactRouteGeometry();
@@ -976,6 +1159,7 @@
     document.getElementById('startTime').value = getDefaultStartTime();
     document.getElementById('routeSlider').disabled = true;
     resetWeatherDisplay();
+    refreshRouteLibrary();
 
     try {
       const routeData = JSON.parse(localStorage.getItem('sailingRouteData') || 'null');
