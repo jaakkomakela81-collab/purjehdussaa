@@ -255,12 +255,21 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.js"></script>
   <script>
+    if ('serviceWorker' in navigator) {
+      const swBlob = new Blob([`
+        const CACHE_NAME = 'merisaa-v3';
+        const ASSETS = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css','https://unpkg.com/leaflet@1.9.4/dist/leaflet.js','https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.css','https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.js'];
+        self.addEventListener('install', e => e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))));
+        self.addEventListener('fetch', e => e.respondWith(caches.match(e.request).then(res => res || fetch(e.request).catch(() => caches.match(e.request)))));
+      `], { type: 'application/javascript' });
+      navigator.serviceWorker.register(URL.createObjectURL(swBlob)).catch(error => console.log('SW error:', error));
+    }
+
     const map = L.map('map').setView([63.5, 20.5], 7);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap' }).addTo(map);
     L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
 
     const routeLayerGroup = L.featureGroup().addTo(map);
-    const rainLayerGroup = L.layerGroup().addTo(map);
     const headingLineLayer = L.polyline([], { color: '#ff0055', weight: 3, dashArray: '8, 6', opacity: 0.95 }).addTo(map);
 
     let waypoints = [];
@@ -270,6 +279,8 @@
     let activeMetric = null;
     let velocityLayer = null;
     let radarLayer = null;
+    let lastRenderedTimeIdx = -1;
+    let lastRenderedMetric = null;
 
     let weatherData = [];
     let marineData = [];
@@ -278,7 +289,6 @@
     let gridBounds = null;
     let sampleRoutePointsData = [];
     const GRID_SIZE = 9;
-    let forecastMaxTime = null;
 
     let gpsWatchId = null;
     let gpsMarker = null;
@@ -313,64 +323,6 @@
       document.getElementById('banner').textContent = message;
     }
 
-    const ROUTE_LIBRARY_UNUSED_KEY = 'sailingRouteLibrary';
-
-    function readRouteLibrary() {
-      try {
-        const routes = JSON.parse(localStorage.getItem(ROUTE_LIBRARY_UNUSED_KEY) || '[]');
-        return Array.isArray(routes) ? routes : [];
-      } catch (error) {
-        return [];
-      }
-    }
-
-    function refreshRouteLibrary() {
-      const select = document.getElementById('savedRouteSelect');
-      select.innerHTML = '<option value="">Valitse tallennettu reitti</option>';
-      readRouteLibrary().forEach(route => {
-        const option = document.createElement('option');
-        option.value = route.id;
-        option.textContent = `${route.name} (${route.waypoints.length} pistettä)`;
-        select.appendChild(option);
-      });
-    }
-
-    function saveRouteToLibrary() {
-      if (waypoints.length < 2) {
-        setBanner('Lisää vähintään kaksi reittipistettä ennen tallennusta.');
-        return;
-      }
-      const name = window.prompt('Anna reitille nimi:', `Reitti ${new Date().toLocaleDateString('fi-FI')}`);
-      if (!name || !name.trim()) return;
-      const routes = readRouteLibrary();
-      routes.unshift({
-        id: `route-${Date.now()}`,
-        name: name.trim(),
-        waypoints: waypoints.map(point => ({ lat: point.lat, lng: point.lng })),
-        speeds: segmentSpeeds.slice(),
-        savedAt: new Date().toISOString()
-      });
-      localStorage.setItem(ROUTE_LIBRARY_KEY, JSON.stringify(routes.slice(0, 20)));
-      refreshRouteLibrary();
-      setBanner(`Reitti tallennettu: ${name.trim()}`);
-    }
-
-    function loadRouteFromLibrary() {
-      const routeId = document.getElementById('savedRouteSelect').value;
-      const route = readRouteLibrary().find(item => item.id === routeId);
-      if (!route) {
-        setBanner('Valitse ensin tallennettu reitti.');
-        return;
-      }
-      document.getElementById('btnClear').click();
-      waypoints = route.waypoints.map(point => L.latLng(point.lat, point.lng));
-      segmentSpeeds = Array.isArray(route.speeds) ? route.speeds.slice() : [];
-      if (waypoints.length > 1) map.fitBounds(L.latLngBounds(waypoints).pad(0.1));
-      updateRouteAndSave();
-      document.getElementById('routeMenu').classList.remove('active');
-      setBanner(`Reitti ladattu: ${route.name}`);
-    }
-
     const ROUTE_LIBRARY_KEY = 'sailingRouteLibrary';
 
     function readRouteLibrary() {
@@ -400,7 +352,6 @@
       markers.forEach(marker => map.removeLayer(marker));
       markers = [];
       routeLayerGroup.clearLayers();
-      if (rainLayerGroup) rainLayerGroup.clearLayers();
       if (boatMarker) { map.removeLayer(boatMarker); boatMarker = null; }
       if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
       if (radarLayer) { map.removeLayer(radarLayer); radarLayer = null; }
@@ -410,13 +361,16 @@
       gridMarineData = [];
       sampleRoutePointsData = [];
       gridBounds = null;
-      forecastMaxTime = null;
       activeMetric = null;
+      lastRenderedTimeIdx = -1;
+      lastRenderedMetric = null;
       updateActiveMetricUi();
       resetWeatherDisplay();
+      localStorage.removeItem('offlineWeatherData');
       document.getElementById('routeSlider').disabled = true;
       document.getElementById('routeSlider').value = 0;
       if (removeCurrentSave) localStorage.removeItem('sailingRouteData');
+      setBanner('Klikkaa karttaa lisätäksesi reittipisteitä.');
     }
 
     function saveRouteToLibrary() {
@@ -787,6 +741,11 @@
 
     function renderVelocityLayerForActiveMetric(timeIdx) {
       if (!gridBounds) return;
+
+      if (lastRenderedTimeIdx === timeIdx && lastRenderedMetric === activeMetric && velocityLayer) return;
+      lastRenderedTimeIdx = timeIdx;
+      lastRenderedMetric = activeMetric;
+
       if (velocityLayer) map.removeLayer(velocityLayer);
 
       const isCurrent = activeMetric === 'current';
@@ -795,22 +754,23 @@
 
       const u = [];
       const v = [];
-      source.forEach(item => {
-        const hourly = item?.hourly;
-        if (!hourly) return;
+      for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+        const hourly = source[i]?.hourly;
         let speed = 0;
         let dir = 0;
-        if (isCurrent) {
-          speed = Number(hourly.ocean_current_velocity?.[timeIdx]) || 0;
-          dir = Number(hourly.ocean_current_direction?.[timeIdx]) || 0;
-        } else {
-          speed = Number(hourly.wind_speed_10m?.[timeIdx]) || 0;
-          dir = Number(hourly.wind_direction_10m?.[timeIdx]) || 0;
+        if (hourly) {
+          if (isCurrent) {
+            speed = Number(hourly.ocean_current_velocity?.[timeIdx]) || 0;
+            dir = Number(hourly.ocean_current_direction?.[timeIdx]) || 0;
+          } else {
+            speed = Number(hourly.wind_speed_10m?.[timeIdx]) || 0;
+            dir = Number(hourly.wind_direction_10m?.[timeIdx]) || 0;
+          }
         }
         const rad = dir * Math.PI / 180;
         u.push(-speed * Math.sin(rad));
         v.push(-speed * Math.cos(rad));
-      });
+      }
 
       const dx = (gridBounds.maxLon - gridBounds.minLon) / (GRID_SIZE - 1);
       const dy = (gridBounds.maxLat - gridBounds.minLat) / (GRID_SIZE - 1);
@@ -869,10 +829,11 @@
         else toggleRadarLayer(false);
       }
 
+      lastRenderedTimeIdx = -1;
       updateActiveMetricUi();
       drawColoredRoute();
       const sliderValue = Number(document.getElementById('routeSlider').value || 0);
-      if (weatherData.length > 0 && sliderValue > 0) updateSimulation(sliderValue / 100);
+      if (weatherData.length > 0) updateSimulation(sliderValue / 100);
     }
 
     document.getElementById('box-time').addEventListener('click', () => selectMetric('total'));
@@ -910,21 +871,30 @@
 
       setBanner('Ladataan sää- ja virtaustietoja...');
 
-      try {
-        const weatherFetches = sampleRoutePointsData.map(pt => fetch(`https://api.open-meteo.com/v1/forecast?latitude=${pt.lat.toFixed(4)}&longitude=${pt.lng.toFixed(4)}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601`));
-        const marineFetches = sampleRoutePointsData.map(pt => fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${pt.lat.toFixed(4)}&longitude=${pt.lng.toFixed(4)}&hourly=wave_height,wave_direction,ocean_current_velocity,ocean_current_direction&timeformat=iso8601`));
-        const gridWindFetches = gridPoints.map(pt => fetch(`https://api.open-meteo.com/v1/forecast?latitude=${pt.lat.toFixed(4)}&longitude=${pt.lng.toFixed(4)}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=iso8601`));
-        const gridCurrentFetches = gridPoints.map(pt => fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${pt.lat.toFixed(4)}&longitude=${pt.lng.toFixed(4)}&hourly=ocean_current_velocity,ocean_current_direction&timeformat=iso8601`));
+      const routeLats = sampleRoutePointsData.map(pt => pt.lat.toFixed(4)).join(',');
+      const routeLons = sampleRoutePointsData.map(pt => pt.lng.toFixed(4)).join(',');
+      const gridLats = gridPoints.map(pt => pt.lat.toFixed(4)).join(',');
+      const gridLons = gridPoints.map(pt => pt.lng.toFixed(4)).join(',');
+      const asArray = data => Array.isArray(data) ? data : [data];
 
-        weatherData = await Promise.all(weatherFetches.map(p => p.then(r => r.json())));
-        marineData = await Promise.all(marineFetches.map(p => p.then(r => r.json())));
-        gridWeatherData = await Promise.all(gridWindFetches.map(p => p.then(r => r.json())));
-        gridMarineData = await Promise.all(gridCurrentFetches.map(p => p.then(r => r.json())));
+      try {
+        const [weatherRes, marineRes, gridWeatherRes, gridMarineRes] = await Promise.all([
+          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${routeLats}&longitude=${routeLons}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601`),
+          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${routeLats}&longitude=${routeLons}&hourly=wave_height,wave_direction,ocean_current_velocity,ocean_current_direction&timeformat=iso8601`),
+          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${gridLats}&longitude=${gridLons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=iso8601`),
+          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${gridLats}&longitude=${gridLons}&hourly=ocean_current_velocity,ocean_current_direction&timeformat=iso8601`)
+        ]);
+
+        weatherData = asArray(await weatherRes.json());
+        marineData = asArray(await marineRes.json());
+        gridWeatherData = asArray(await gridWeatherRes.json());
+        gridMarineData = asArray(await gridMarineRes.json());
 
         localStorage.setItem('offlineWeatherData', JSON.stringify({ weatherData, marineData, gridWeatherData, gridMarineData, gridBounds, sampleRoutePointsData, savedAt: new Date().toISOString() }));
         document.getElementById('routeSlider').disabled = false;
         document.getElementById('routeSlider').value = 0;
         setBanner('Sää- ja virtaustiedot ladattu.');
+        lastRenderedTimeIdx = -1;
         updateSimulation(0);
         drawColoredRoute();
       } catch (error) {
@@ -990,39 +960,7 @@
       updateRouteAndSave();
     });
 
-    document.getElementById('btnClear').addEventListener('click', () => {
-      waypoints = [];
-      segmentSpeeds = [];
-      markers.forEach(marker => map.removeLayer(marker));
-      markers = [];
-      routeLayerGroup.clearLayers();
-      if (boatMarker) {
-        map.removeLayer(boatMarker);
-        boatMarker = null;
-      }
-      if (velocityLayer) {
-        map.removeLayer(velocityLayer);
-        velocityLayer = null;
-      }
-      if (radarLayer) {
-        map.removeLayer(radarLayer);
-        radarLayer = null;
-      }
-      weatherData = [];
-      marineData = [];
-      gridWeatherData = [];
-      gridMarineData = [];
-      sampleRoutePointsData = [];
-      gridBounds = null;
-      activeMetric = null;
-      updateActiveMetricUi();
-      resetWeatherDisplay();
-      localStorage.removeItem('sailingRouteData');
-      localStorage.removeItem('offlineWeatherData');
-      document.getElementById('routeSlider').disabled = true;
-      document.getElementById('routeSlider').value = 0;
-      setBanner('Klikkaa karttaa lisätäksesi reittipisteitä.');
-    });
+    document.getElementById('btnClear').addEventListener('click', () => clearRouteState(true));
 
     document.getElementById('speed').addEventListener('input', () => {
       updateRouteAndSave();
@@ -1030,6 +968,7 @@
     });
 
     document.getElementById('routeSlider').addEventListener('input', (event) => {
+      document.getElementById('chkRealtime').checked = false;
       const progress = Number(event.target.value) / 100;
       if (weatherData.length > 0) updateSimulation(progress);
       else if (waypoints.length > 1) {
