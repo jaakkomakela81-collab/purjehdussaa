@@ -66,6 +66,7 @@
     .slider-container { display: flex; flex-direction: column; gap: 2px; }
     input[type="range"] { width: 100%; accent-color: #38bdf8; }
     label { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; margin-bottom: 2px; }
+    .hint-text { color: #94a3b8; font-size: 10px; line-height: 1.35; text-transform: none; }
 
     .collapsible-controls {
       display: flex; flex-direction: column; gap: 6px; max-height: 280px; opacity: 1; overflow: hidden; transition: max-height .35s ease, opacity .25s ease, margin .25s ease;
@@ -209,6 +210,15 @@
           <label for="chkRealtime">Automaattinen eteneminen lähtöajan mukaan</label>
         </div>
 
+        <div class="field">
+          <label for="bestTimeDays">Etsi paras sää seuraavan <span id="bestTimeDaysVal">7</span> vrk sisällä</label>
+          <input type="range" id="bestTimeDays" min="0" max="7" step="1" value="7">
+        </div>
+        <div class="btn-group">
+          <button class="action-btn btn-secondary" id="btnFindBestTime" disabled>Ehdota paras lähtöaika</button>
+        </div>
+        <div class="hint-text" id="bestTimeResult"></div>
+
         <div class="btn-group">
           <button class="action-btn btn-danger" id="btnClear">Tyhjennä</button>
           <button class="action-btn btn-secondary" id="btnReverse" disabled>Käännä</button>
@@ -309,10 +319,13 @@
       iconAnchor: [7, 7]
     });
 
+    function toLocalDatetimeInputValue(date) {
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 16);
+    }
+
     function getDefaultStartTime() {
-      const now = new Date();
-      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-      return now.toISOString().slice(0, 16);
+      return toLocalDatetimeInputValue(new Date());
     }
 
     function readStartTime() {
@@ -369,6 +382,8 @@
       localStorage.removeItem('offlineWeatherData');
       document.getElementById('routeSlider').disabled = true;
       document.getElementById('routeSlider').value = 0;
+      document.getElementById('btnFindBestTime').disabled = true;
+      document.getElementById('bestTimeResult').textContent = '';
       if (removeCurrentSave) localStorage.removeItem('sailingRouteData');
       setBanner('Klikkaa karttaa lisätäksesi reittipisteitä.');
     }
@@ -622,11 +637,12 @@
       updateRouteAndSave();
     });
 
-    function getConditionsAtProgress(progress) {
+    function getConditionsAtProgress(progress, options = {}) {
+      const { startDateOverride = null, strict = false } = options;
       const geom = getExactRouteGeometry();
       if (waypoints.length < 2 || geom.segments.length === 0) return null;
 
-      const startDate = readStartTime();
+      const startDate = startDateOverride || readStartTime();
       const currentDist = geom.totalDist * progress;
       const pos = getExactPositionAtDistance(currentDist, geom);
 
@@ -647,7 +663,10 @@
 
       const targetIso = curDate.toISOString().slice(0, 13) + ':00';
       let timeIdx = pointWeather.time.findIndex(t => t.startsWith(targetIso));
-      if (timeIdx === -1) timeIdx = 0;
+      if (timeIdx === -1) {
+        if (strict) return { pos, curDate, currentDist };
+        timeIdx = 0;
+      }
 
       const windSpeed = Number(pointWeather.wind_speed_10m?.[timeIdx]) || 0;
       const windDir = Number(pointWeather.wind_direction_10m?.[timeIdx]) || 0;
@@ -692,6 +711,43 @@
         currentSegHeading,
         diffs: { total: totalDiff, wind: windDiff, angle: angleDiff, wave: waveDiff, current: currentDiff, weather: weatherDiff }
       };
+    }
+
+    function evaluateRouteDifficulty(startDate) {
+      if (weatherData.length === 0 || marineData.length === 0) return null;
+      const samples = 12;
+      let total = 0;
+      let count = 0;
+      for (let i = 0; i <= samples; i++) {
+        const cond = getConditionsAtProgress(i / samples, { startDateOverride: startDate, strict: true });
+        if (!cond || !cond.diffs) return null;
+        total += cond.diffs.total;
+        count++;
+      }
+      return count > 0 ? total / count : null;
+    }
+
+    function getDayPartLabel(date) {
+      const hour = date.getHours();
+      if (hour < 6) return 'aamuyö';
+      if (hour < 12) return 'aamupäivä';
+      if (hour < 18) return 'iltapäivä';
+      return 'ilta';
+    }
+
+    function findBestDepartureTime(withinDays) {
+      if (weatherData.length === 0 || marineData.length === 0) return null;
+      const start = new Date();
+      start.setMinutes(0, 0, 0);
+      const totalHours = Math.max(1, Math.round(withinDays * 24));
+      let best = null;
+      for (let h = 0; h <= totalHours; h++) {
+        const candidate = new Date(start.getTime() + h * 60 * 60 * 1000);
+        const avgDiff = evaluateRouteDifficulty(candidate);
+        if (avgDiff === null) continue;
+        if (!best || avgDiff < best.avgDiff) best = { time: candidate, avgDiff };
+      }
+      return best;
     }
 
     function applyMetricColors(metricName, diff) {
@@ -879,10 +935,10 @@
 
       try {
         const [weatherRes, marineRes, gridWeatherRes, gridMarineRes] = await Promise.all([
-          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${routeLats}&longitude=${routeLons}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601`),
-          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${routeLats}&longitude=${routeLons}&hourly=wave_height,wave_direction,ocean_current_velocity,ocean_current_direction&timeformat=iso8601`),
-          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${gridLats}&longitude=${gridLons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=iso8601`),
-          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${gridLats}&longitude=${gridLons}&hourly=ocean_current_velocity,ocean_current_direction&timeformat=iso8601`)
+          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${routeLats}&longitude=${routeLons}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601&forecast_days=7`),
+          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${routeLats}&longitude=${routeLons}&hourly=wave_height,wave_direction,ocean_current_velocity,ocean_current_direction&timeformat=iso8601&forecast_days=7`),
+          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${gridLats}&longitude=${gridLons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=iso8601&forecast_days=7`),
+          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${gridLats}&longitude=${gridLons}&hourly=ocean_current_velocity,ocean_current_direction&timeformat=iso8601&forecast_days=7`)
         ]);
 
         weatherData = asArray(await weatherRes.json());
@@ -893,6 +949,7 @@
         localStorage.setItem('offlineWeatherData', JSON.stringify({ weatherData, marineData, gridWeatherData, gridMarineData, gridBounds, sampleRoutePointsData, savedAt: new Date().toISOString() }));
         document.getElementById('routeSlider').disabled = false;
         document.getElementById('routeSlider').value = 0;
+        document.getElementById('btnFindBestTime').disabled = false;
         setBanner('Sää- ja virtaustiedot ladattu.');
         lastRenderedTimeIdx = -1;
         updateSimulation(0);
@@ -980,6 +1037,32 @@
     });
 
     document.getElementById('btnFetch').addEventListener('click', fetchWeatherData);
+
+    document.getElementById('bestTimeDays').addEventListener('input', (event) => {
+      document.getElementById('bestTimeDaysVal').textContent = event.target.value;
+    });
+
+    document.getElementById('btnFindBestTime').addEventListener('click', () => {
+      const days = Number(document.getElementById('bestTimeDays').value);
+      const resultEl = document.getElementById('bestTimeResult');
+      setBanner('Etsitään parasta lähtöaikaa...');
+      const best = findBestDepartureTime(days);
+      if (!best) {
+        resultEl.textContent = 'Ei löytynyt kattavaa ennustedataa valitulta aikaväliltä. Hae sää uudelleen tai pienennä aikaväliä.';
+        setBanner('Parasta lähtöaikaa ei löytynyt.');
+        return;
+      }
+      document.getElementById('startTime').value = toLocalDatetimeInputValue(best.time);
+      const weekday = best.time.toLocaleDateString('fi-FI', { weekday: 'short' });
+      const dateStr = best.time.toLocaleDateString('fi-FI', { day: 'numeric', month: 'numeric' });
+      const timeStr = best.time.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+      const difficultyPct = Math.round(best.avgDiff * 100);
+      resultEl.textContent = `Paras lähtöaika: ${weekday} ${dateStr} klo ${timeStr} (${getDayPartLabel(best.time)}) — keskim. vaikeus ${difficultyPct} %`;
+      lastRenderedTimeIdx = -1;
+      updateSimulation(0);
+      drawColoredRoute();
+      setBanner('Paras lähtöaika ehdotettu — voit vielä säätää sitä käsin.');
+    });
 
     document.getElementById('btnMenu').addEventListener('click', () => {
       document.getElementById('routeMenu').classList.toggle('active');
@@ -1120,6 +1203,7 @@
         gridBounds = cached.gridBounds || null;
         sampleRoutePointsData = cached.sampleRoutePointsData || [];
         document.getElementById('routeSlider').disabled = false;
+        document.getElementById('btnFindBestTime').disabled = false;
         setBanner('Tallennettu säädata ladattu.');
         updateSimulation(0);
         drawColoredRoute();
