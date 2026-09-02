@@ -68,6 +68,19 @@
     label { font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; margin-bottom: 2px; }
     .hint-text { color: #94a3b8; font-size: 10px; line-height: 1.35; text-transform: none; }
 
+    .range-dual { position: relative; height: 24px; }
+    .range-dual::before {
+      content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 4px; margin-top: -2px;
+      background: #334155; border-radius: 2px; pointer-events: none;
+    }
+    .range-dual input[type="range"] {
+      position: absolute; top: 0; left: 0; width: 100%; margin: 0; background: none; pointer-events: none;
+    }
+    .range-dual input[type="range"]::-webkit-slider-runnable-track { background: none; }
+    .range-dual input[type="range"]::-webkit-slider-thumb { pointer-events: auto; }
+    .range-dual input[type="range"]::-moz-range-thumb { pointer-events: auto; }
+    .range-dual input[type="range"]::-moz-range-track { background: none; }
+
     .collapsible-controls {
       display: flex; flex-direction: column; gap: 6px; max-height: 280px; opacity: 1; overflow: hidden; transition: max-height .35s ease, opacity .25s ease, margin .25s ease;
     }
@@ -222,8 +235,11 @@
             </select>
           </div>
           <div class="field">
-            <label for="bestTimeDays">Aikaväli: <span id="bestTimeDaysVal">7</span> vrk</label>
-            <input type="range" id="bestTimeDays" min="0" max="7" step="1" value="7">
+            <label>Aikaväli: <span id="bestTimeDaysMinVal">0</span>–<span id="bestTimeDaysMaxVal">7</span> vrk</label>
+            <div class="range-dual">
+              <input type="range" id="bestTimeDaysMin" min="0" max="7" step="1" value="0">
+              <input type="range" id="bestTimeDaysMax" min="0" max="7" step="1" value="7">
+            </div>
           </div>
         </div>
         <div class="btn-group">
@@ -756,13 +772,14 @@
       return 'ilta';
     }
 
-    function findBestDepartureTime(withinDays, preferredDayPart = '') {
+    function findBestDepartureTime(minDays, maxDays, preferredDayPart = '') {
       if (weatherData.length === 0 || marineData.length === 0) return null;
       const start = new Date();
       start.setMinutes(0, 0, 0);
-      const totalHours = Math.max(1, Math.round(withinDays * 24));
+      const fromHour = Math.max(0, Math.round(minDays * 24));
+      const toHour = Math.max(fromHour, Math.round(maxDays * 24));
       let best = null;
-      for (let h = 0; h <= totalHours; h++) {
+      for (let h = fromHour; h <= toHour; h++) {
         const candidate = new Date(start.getTime() + h * 60 * 60 * 1000);
         if (preferredDayPart && getDayPartLabel(candidate) !== preferredDayPart) continue;
         const avgDiff = evaluateRouteDifficulty(candidate);
@@ -1068,16 +1085,35 @@
 
     document.getElementById('btnFetch').addEventListener('click', fetchWeatherData);
 
-    document.getElementById('bestTimeDays').addEventListener('input', (event) => {
-      document.getElementById('bestTimeDaysVal').textContent = event.target.value;
+    const bestTimeDaysMinInput = document.getElementById('bestTimeDaysMin');
+    const bestTimeDaysMaxInput = document.getElementById('bestTimeDaysMax');
+
+    function updateBestTimeDaysLabels() {
+      document.getElementById('bestTimeDaysMinVal').textContent = bestTimeDaysMinInput.value;
+      document.getElementById('bestTimeDaysMaxVal').textContent = bestTimeDaysMaxInput.value;
+    }
+
+    bestTimeDaysMinInput.addEventListener('input', () => {
+      if (Number(bestTimeDaysMinInput.value) > Number(bestTimeDaysMaxInput.value)) {
+        bestTimeDaysMaxInput.value = bestTimeDaysMinInput.value;
+      }
+      updateBestTimeDaysLabels();
+    });
+
+    bestTimeDaysMaxInput.addEventListener('input', () => {
+      if (Number(bestTimeDaysMaxInput.value) < Number(bestTimeDaysMinInput.value)) {
+        bestTimeDaysMinInput.value = bestTimeDaysMaxInput.value;
+      }
+      updateBestTimeDaysLabels();
     });
 
     document.getElementById('btnFindBestTime').addEventListener('click', () => {
-      const days = Number(document.getElementById('bestTimeDays').value);
+      const minDays = Number(bestTimeDaysMinInput.value);
+      const maxDays = Number(bestTimeDaysMaxInput.value);
       const preferredDayPart = document.getElementById('preferredDayPart').value;
       const resultEl = document.getElementById('bestTimeResult');
       setBanner('Etsitään parasta lähtöaikaa...');
-      const best = findBestDepartureTime(days, preferredDayPart);
+      const best = findBestDepartureTime(minDays, maxDays, preferredDayPart);
       if (!best) {
         resultEl.textContent = 'Ei löytynyt kattavaa ennustedataa valitulta aikaväliltä/vuorokaudenajalta. Hae sää uudelleen, pienennä aikaväliä tai valitse toinen vuorokaudenaika.';
         setBanner('Parasta lähtöaikaa ei löytynyt.');
