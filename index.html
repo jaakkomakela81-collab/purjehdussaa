@@ -69,17 +69,25 @@
     .hint-text { color: #94a3b8; font-size: 10px; line-height: 1.35; text-transform: none; }
 
     .range-dual { position: relative; height: 24px; }
-    .range-dual::before {
-      content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 4px; margin-top: -2px;
-      background: #334155; border-radius: 2px; pointer-events: none;
+    .range-dual .range-track, .range-dual .range-fill {
+      position: absolute; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px; pointer-events: none;
     }
+    .range-dual .range-track { left: 0; right: 0; background: #334155; }
+    .range-dual .range-fill { background: #38bdf8; }
     .range-dual input[type="range"] {
-      position: absolute; top: 0; left: 0; width: 100%; margin: 0; background: none; pointer-events: none;
+      position: absolute; top: 0; left: 0; width: 100%; height: 24px; margin: 0; background: none; pointer-events: none;
+      -webkit-appearance: none; appearance: none;
     }
-    .range-dual input[type="range"]::-webkit-slider-runnable-track { background: none; }
-    .range-dual input[type="range"]::-webkit-slider-thumb { pointer-events: auto; }
-    .range-dual input[type="range"]::-moz-range-thumb { pointer-events: auto; }
-    .range-dual input[type="range"]::-moz-range-track { background: none; }
+    .range-dual input[type="range"]::-webkit-slider-runnable-track { -webkit-appearance: none; background: none; height: 4px; }
+    .range-dual input[type="range"]::-moz-range-track { background: none; height: 4px; }
+    .range-dual input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; pointer-events: auto; width: 16px; height: 16px; margin-top: -6px;
+      border-radius: 50%; background: #38bdf8; border: 2px solid #0f172a; cursor: pointer;
+    }
+    .range-dual input[type="range"]::-moz-range-thumb {
+      pointer-events: auto; width: 16px; height: 16px; border-radius: 50%;
+      background: #38bdf8; border: 2px solid #0f172a; cursor: pointer;
+    }
 
     .collapsible-controls {
       display: flex; flex-direction: column; gap: 6px; max-height: 280px; opacity: 1; overflow: hidden; transition: max-height .35s ease, opacity .25s ease, margin .25s ease;
@@ -237,6 +245,8 @@
           <div class="field">
             <label>Aikaväli: <span id="bestTimeDaysMinVal">0</span>–<span id="bestTimeDaysMaxVal">7</span> vrk</label>
             <div class="range-dual">
+              <div class="range-track"></div>
+              <div class="range-fill" id="bestTimeDaysFill"></div>
               <input type="range" id="bestTimeDaysMin" min="0" max="7" step="1" value="0">
               <input type="range" id="bestTimeDaysMax" min="0" max="7" step="1" value="7">
             </div>
@@ -1089,8 +1099,14 @@
     const bestTimeDaysMaxInput = document.getElementById('bestTimeDaysMax');
 
     function updateBestTimeDaysLabels() {
-      document.getElementById('bestTimeDaysMinVal').textContent = bestTimeDaysMinInput.value;
-      document.getElementById('bestTimeDaysMaxVal').textContent = bestTimeDaysMaxInput.value;
+      const min = Number(bestTimeDaysMinInput.value);
+      const max = Number(bestTimeDaysMaxInput.value);
+      document.getElementById('bestTimeDaysMinVal').textContent = min;
+      document.getElementById('bestTimeDaysMaxVal').textContent = max;
+      const span = Number(bestTimeDaysMinInput.max) - Number(bestTimeDaysMinInput.min);
+      const fill = document.getElementById('bestTimeDaysFill');
+      fill.style.left = `${(min / span) * 100}%`;
+      fill.style.width = `${((max - min) / span) * 100}%`;
     }
 
     bestTimeDaysMinInput.addEventListener('input', () => {
@@ -1106,6 +1122,8 @@
       }
       updateBestTimeDaysLabels();
     });
+
+    updateBestTimeDaysLabels();
 
     document.getElementById('btnFindBestTime').addEventListener('click', () => {
       const minDays = Number(bestTimeDaysMinInput.value);
