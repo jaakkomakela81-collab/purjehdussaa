@@ -260,6 +260,7 @@
     L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
 
     const routeLayerGroup = L.featureGroup().addTo(map);
+    const rainLayerGroup = L.layerGroup().addTo(map);
     const headingLineLayer = L.polyline([], { color: '#ff0055', weight: 3, dashArray: '8, 6', opacity: 0.95 }).addTo(map);
 
     let waypoints = [];
@@ -277,6 +278,7 @@
     let gridBounds = null;
     let sampleRoutePointsData = [];
     const GRID_SIZE = 9;
+    let forecastMaxTime = null;
 
     let gpsWatchId = null;
     let gpsMarker = null;
@@ -311,11 +313,11 @@
       document.getElementById('banner').textContent = message;
     }
 
-    const ROUTE_LIBRARY_KEY = 'sailingRouteLibrary';
+    const ROUTE_LIBRARY_UNUSED_KEY = 'sailingRouteLibrary';
 
     function readRouteLibrary() {
       try {
-        const routes = JSON.parse(localStorage.getItem(ROUTE_LIBRARY_KEY) || '[]');
+        const routes = JSON.parse(localStorage.getItem(ROUTE_LIBRARY_UNUSED_KEY) || '[]');
         return Array.isArray(routes) ? routes : [];
       } catch (error) {
         return [];
@@ -1149,7 +1151,7 @@
     document.getElementById('btnToggleControls').addEventListener('click', toggleControls);
 
     const modal = document.getElementById('infoModal');
-    document.getElementById('btnInfo').addEventListener('click', () => modal.classList.add('active'));
+    document.getElementById('btnOpenInfo').addEventListener('click', () => modal.classList.add('active'));
     document.getElementById('btnCloseModalX').addEventListener('click', () => modal.classList.remove('active'));
     document.getElementById('btnCloseModalBtn').addEventListener('click', () => modal.classList.remove('active'));
     modal.addEventListener('click', (event) => {
