@@ -29,3 +29,8 @@
       Haku: `res.ok`-tarkistus, Open-Meteon virheviestit, yksi uusintayritys 5xx/verkkovirheessä,
       meridata valinnainen, atomaarinen sijoitus ja localStorage-täyttymisen käsittely.
 - [ ] Tarkista oikealla laitteella: PWA:n asennus kotinäytölle ja offline-käynnistys (iOS Safari + Android Chrome)
+- [x] Turvarajat (max tuuli/puuska/aallokko, oletus 12 m/s / 16 m/s / 2 m, tallentuvat laitteelle):
+      varoitus reitin alla kun raja ylittyy valitulla lähtöajalla; puuskat mukaan vaikeusarvioon
+      (14 m/s → 22 m/s); "Ehdota paras lähtöaika" karsii ensin rajojen ylitykset ja vertaa sitten
+      0,5 × keskiarvo + 0,5 × vaikein kohta. Kertoo selvästi, jos kaikki vaihtoehdot ylittävät rajan.
+- [ ] Säädä oletusrajat omalle veneelle (nykyiset ovat yleisarvaus)

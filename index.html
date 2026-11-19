@@ -93,12 +93,17 @@
     }
 
     .collapsible-controls {
-      display: flex; flex-direction: column; gap: 6px; max-height: 280px; opacity: 1; overflow: hidden; transition: max-height .35s ease, opacity .25s ease, margin .25s ease;
+      display: flex; flex-direction: column; gap: 6px; max-height: 360px; opacity: 1; overflow: hidden; transition: max-height .35s ease, opacity .25s ease, margin .25s ease;
     }
     .collapsible-controls.collapsed { max-height: 0; opacity: 0; margin: 0; pointer-events: none; }
 
     .controls-row { display: grid; grid-template-columns: 1fr 1.2fr; gap: 8px; width: 100%; }
+    .controls-row.three { grid-template-columns: 1fr 1fr 1fr; }
     .field { display: flex; flex-direction: column; width: 100%; }
+    .limit-summary { font-size: 10px; line-height: 1.35; border-radius: 6px; padding: 4px 8px; }
+    .limit-summary:empty { display: none; }
+    .limit-summary.warn { background: rgba(239, 68, 68, .15); border: 1px solid rgba(239, 68, 68, .45); color: #fca5a5; }
+    .limit-summary.ok { background: rgba(16, 185, 129, .12); border: 1px solid rgba(16, 185, 129, .4); color: #86efac; }
     .checkbox-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #e2e8f0; }
     .checkbox-row input[type="checkbox"] { accent-color: #38bdf8; }
     input[type="number"], input[type="datetime-local"], select {
@@ -216,6 +221,7 @@
         <label for="routeSlider">Aja reittiä</label>
         <input type="range" id="routeSlider" min="0" max="100" value="0" disabled>
       </div>
+      <div class="limit-summary" id="limitSummary" role="status"></div>
 
       <div class="collapsible-controls" id="controlsDrawer">
         <div class="controls-row">
@@ -232,6 +238,21 @@
         <div class="checkbox-row">
           <input type="checkbox" id="chkRealtime" checked>
           <label for="chkRealtime">Automaattinen eteneminen lähtöajan mukaan</label>
+        </div>
+
+        <div class="controls-row three" title="Turvarajat: ylittävät kohdat varoitetaan ja ehdotettu lähtöaika välttää niitä. Tyhjä = ei rajaa.">
+          <div class="field">
+            <label for="limWind">Max tuuli m/s</label>
+            <input type="number" id="limWind" value="12" step="1" min="0" inputmode="decimal" placeholder="ei rajaa">
+          </div>
+          <div class="field">
+            <label for="limGust">Max puuska m/s</label>
+            <input type="number" id="limGust" value="16" step="1" min="0" inputmode="decimal" placeholder="ei rajaa">
+          </div>
+          <div class="field">
+            <label for="limWave">Max aallokko m</label>
+            <input type="number" id="limWave" value="2" step="0.5" min="0" inputmode="decimal" placeholder="ei rajaa">
+          </div>
         </div>
 
         <div class="controls-row">
@@ -295,6 +316,10 @@
           <span class="info-val">Lähtöaika ohjaa venettä eteenpäin. GPS:n ollessa käytössä näytetään, jääkö vene jälkeen reitistä.</span>
         </div>
         <div class="info-item">
+          <span class="info-label">🛟 Turvarajat</span>
+          <span class="info-val">Aseta suurin sallittu tuuli, puuska ja aallokko. Jos raja ylittyy valitulla lähtöajalla, reitin alla näkyy varoitus. "Ehdota paras lähtöaika" välttää ylityksiä ensin ja vertaa sitten sään vaikeutta (keskiarvo ja vaikein kohta). Tyhjä kenttä = ei rajaa.</span>
+        </div>
+        <div class="info-item">
           <span class="info-label">Lähteet</span>
           <span class="info-val">Kartta: OpenStreetMap ja OpenSeaMap. Sää ja tuuli: Open-Meteo Forecast API. Meridata: Open-Meteo Marine API. Sadetutka: RainViewer. Animaatio: Leaflet Velocity.</span>
         </div>
@@ -346,6 +371,8 @@
     let gridBounds = null;
     let sampleRoutePointsData = [];
     let dataFetchedAt = null;
+    const LIMITS_KEY = 'sailingLimits';
+    let routeLimits = { maxWind: Infinity, maxGust: Infinity, maxWave: Infinity };
     const GRID_SIZE = 9;
 
     let gpsWatchId = null;
@@ -766,7 +793,10 @@
       }
 
       const angleDiff = relAngle === null ? null : relAngle <= 45 ? 1 : relAngle < 65 ? 1 - ((relAngle - 45) / 20) : relAngle < 150 ? 0 : 0.2;
-      const windDiff = windSpeed === null ? null : windSpeed < 2.5 ? 0.5 : windSpeed > 12 ? Math.min(1, (windSpeed - 12) / 6) : windSpeed > 8 ? (windSpeed - 8) / 8 : 0;
+      const meanWindDiff = windSpeed === null ? null : windSpeed < 2.5 ? 0.5 : windSpeed > 12 ? Math.min(1, (windSpeed - 12) / 6) : windSpeed > 8 ? (windSpeed - 8) / 8 : 0;
+      // Puuskat: alle 14 m/s ei lisää vaikeutta, 22 m/s puuska = täysi vaikeus. Tuuliosa on keskituulen ja puuskan huonompi.
+      const gustDiff = gustSpeed === null ? null : gustSpeed <= 14 ? 0 : Math.min(1, (gustSpeed - 14) / 8);
+      const windDiff = meanWindDiff === null && gustDiff === null ? null : Math.max(meanWindDiff ?? 0, gustDiff ?? 0);
       const waveDiff = waveHeight === null ? null : Math.min(1, waveHeight / 2);
       const currentDiff = (currentKnots === null || currentDir === null) ? null : (Math.abs(currentDir - currentSegHeading) % 360) < 90 ? Math.min(1, currentKnots / 1.5) : 0;
       const weatherDiff = weatherCode === null ? null : weatherCode >= 95 ? 1 : weatherCode >= 61 || weatherCode === 45 || weatherCode === 48 ? 0.6 : 0;
@@ -776,6 +806,12 @@
       if (parts.length === 0) return { pos, curDate, currentDist, noData: true };
       const weightSum = parts.reduce((s, [, w]) => s + w, 0);
       const totalDiff = Math.min(1, Math.max(0, parts.reduce((s, [d, w]) => s + d * w, 0) / weightSum));
+
+      // Käyttäjän turvarajat (puuttuva arvo ei koskaan ylitä rajaa).
+      const exceeded = [];
+      if (windSpeed !== null && windSpeed > routeLimits.maxWind) exceeded.push('wind');
+      if (gustSpeed !== null && gustSpeed > routeLimits.maxGust) exceeded.push('gust');
+      if (waveHeight !== null && waveHeight > routeLimits.maxWave) exceeded.push('wave');
 
       return {
         pos,
@@ -795,22 +831,78 @@
         currentKnots,
         relAngle,
         currentSegHeading,
+        exceeded,
         diffs: { total: totalDiff, wind: windDiff, angle: angleDiff, wave: waveDiff, current: currentDiff, weather: weatherDiff }
       };
     }
 
+    const LIMIT_LABELS = { wind: 'keskituuli', gust: 'puuska', wave: 'aallokko' };
+
+    // Arvioi koko reitin annetulla lähtöajalla. Palauttaa null, jos ennuste ei kata koko matkaa.
+    // score = 0,5 * keskiarvo + 0,5 * pahin kohta, jotta yksittäinen vaarallinen jakso ei hukkuu keskiarvoon.
     function evaluateRouteDifficulty(startDate) {
       if (weatherData.length === 0 || marineData.length === 0) return null;
       const samples = 12;
       let total = 0;
-      let count = 0;
+      let max = 0;
+      let violationPoints = 0;
+      const exceed = { wind: { count: 0, peak: null }, gust: { count: 0, peak: null }, wave: { count: 0, peak: null } };
+      const values = { wind: 'windSpeed', gust: 'gustSpeed', wave: 'waveHeight' };
       for (let i = 0; i <= samples; i++) {
         const cond = getConditionsAtProgress(i / samples, { startDateOverride: startDate });
         if (!cond || !cond.diffs) return null;
         total += cond.diffs.total;
-        count++;
+        max = Math.max(max, cond.diffs.total);
+        if (cond.exceeded.length > 0) violationPoints++;
+        cond.exceeded.forEach(key => {
+          exceed[key].count++;
+          exceed[key].peak = Math.max(exceed[key].peak ?? 0, cond[values[key]]);
+        });
       }
-      return count > 0 ? total / count : null;
+      const points = samples + 1;
+      const avg = total / points;
+      return { avg, max, score: 0.5 * avg + 0.5 * max, violationPoints, points, exceed };
+    }
+
+    function limitsActive() {
+      return Number.isFinite(routeLimits.maxWind) || Number.isFinite(routeLimits.maxGust) || Number.isFinite(routeLimits.maxWave);
+    }
+
+    // Esim. "puuska 3/13 kohdassa (huippu 18,2 m/s), aallokko 1/13 kohdassa (huippu 2,4 m)"
+    function describeExceedance(evalResult) {
+      return Object.keys(LIMIT_LABELS)
+        .filter(key => evalResult.exceed[key].count > 0)
+        .map(key => {
+          const unit = key === 'wave' ? 'm' : 'm/s';
+          return `${LIMIT_LABELS[key]} ${evalResult.exceed[key].count}/${evalResult.points} kohdassa (huippu ${evalResult.exceed[key].peak.toFixed(1)} ${unit})`;
+        }).join(', ');
+    }
+
+    function readLimitInputs() {
+      const read = id => {
+        const raw = document.getElementById(id).value;
+        const n = raw === '' ? NaN : Number(raw);
+        return Number.isFinite(n) && n > 0 ? n : Infinity;
+      };
+      routeLimits = { maxWind: read('limWind'), maxGust: read('limGust'), maxWave: read('limWave') };
+      return routeLimits;
+    }
+
+    // Reitin yhteenveto valitulla lähtöajalla: varoitus rajojen ylityksistä (tai vahvistus, ettei niitä ole).
+    function refreshLimitSummary() {
+      const el = document.getElementById('limitSummary');
+      el.className = 'limit-summary';
+      el.textContent = '';
+      if (weatherData.length === 0 || !limitsActive()) return;
+      const result = evaluateRouteDifficulty(readStartTime());
+      if (!result) return;
+      if (result.violationPoints > 0) {
+        el.classList.add('warn');
+        el.textContent = `⚠ Rajat ylittyvät lähtöajalla: ${describeExceedance(result)}.`;
+      } else {
+        el.classList.add('ok');
+        el.textContent = '✓ Reitti pysyy asettamissasi turvarajoissa tällä lähtöajalla.';
+      }
     }
 
     function getDayPartLabel(date) {
@@ -821,6 +913,7 @@
       return 'ilta';
     }
 
+    // Paras lähtöaika: ensin vähiten turvarajojen ylityskohtia, sitten pienin score (keskiarvo + pahin kohta).
     function findBestDepartureTime(minDays, maxDays, preferredDayPart = '') {
       if (weatherData.length === 0 || marineData.length === 0) return null;
       const start = new Date();
@@ -831,9 +924,10 @@
       for (let h = fromHour; h <= toHour; h++) {
         const candidate = new Date(start.getTime() + h * 60 * 60 * 1000);
         if (preferredDayPart && getDayPartLabel(candidate) !== preferredDayPart) continue;
-        const avgDiff = evaluateRouteDifficulty(candidate);
-        if (avgDiff === null) continue;
-        if (!best || avgDiff < best.avgDiff) best = { time: candidate, avgDiff };
+        const r = evaluateRouteDifficulty(candidate);
+        if (r === null) continue;
+        const better = !best || r.violationPoints < best.violationPoints || (r.violationPoints === best.violationPoints && r.score < best.score);
+        if (better) best = { time: candidate, avgDiff: r.avg, maxDiff: r.max, score: r.score, violationPoints: r.violationPoints, evaluation: r };
       }
       return best;
     }
@@ -1152,6 +1246,7 @@
 
       if (weatherData.length === 0 || marineData.length === 0) return;
 
+      refreshLimitSummary();
       const routeGeom = getExactRouteGeometry();
       document.getElementById('timeVal').textContent = cond.curDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       document.getElementById('distVal').textContent = `${cond.currentDist.toFixed(1)} / ${routeGeom.totalDist.toFixed(1)} NM`;
@@ -1280,8 +1375,13 @@
       const weekday = best.time.toLocaleDateString('fi-FI', { weekday: 'short' });
       const dateStr = best.time.toLocaleDateString('fi-FI', { day: 'numeric', month: 'numeric' });
       const timeStr = best.time.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
-      const difficultyPct = Math.round(best.avgDiff * 100);
-      resultEl.textContent = `Paras lähtöaika: ${weekday} ${dateStr} klo ${timeStr} (${getDayPartLabel(best.time)}) — keskim. vaikeus ${difficultyPct} %`;
+      let text = `Paras lähtöaika: ${weekday} ${dateStr} klo ${timeStr} (${getDayPartLabel(best.time)}) — keskim. vaikeus ${Math.round(best.avgDiff * 100)} %, vaikein kohta ${Math.round(best.maxDiff * 100)} %`;
+      if (limitsActive()) {
+        text += best.violationPoints > 0
+          ? ` ⚠ Mikään lähtöaika tältä väliltä ei pysy rajoissa; tässä vähiten ylityksiä: ${describeExceedance(best.evaluation)}.`
+          : ' ✓ Pysyy turvarajoissa.';
+      }
+      resultEl.textContent = text;
       lastRenderedTimeIdx = -1;
       updateSimulation(0);
       drawColoredRoute();
@@ -1402,6 +1502,27 @@
     document.getElementById('btnCloseModalBtn').addEventListener('click', () => modal.classList.remove('active'));
     modal.addEventListener('click', (event) => {
       if (event.target === modal) modal.classList.remove('active');
+    });
+
+    // Turvarajat: palautus localStoragesta, tallennus muutettaessa
+    try {
+      const savedLimits = JSON.parse(localStorage.getItem(LIMITS_KEY) || 'null');
+      if (savedLimits) {
+        document.getElementById('limWind').value = savedLimits.wind ?? '';
+        document.getElementById('limGust').value = savedLimits.gust ?? '';
+        document.getElementById('limWave').value = savedLimits.wave ?? '';
+      }
+    } catch (error) { /* käytetään oletuksia */ }
+    readLimitInputs();
+    ['limWind', 'limGust', 'limWave'].forEach(id => document.getElementById(id).addEventListener('input', () => {
+      readLimitInputs();
+      try {
+        localStorage.setItem(LIMITS_KEY, JSON.stringify({ wind: document.getElementById('limWind').value, gust: document.getElementById('limGust').value, wave: document.getElementById('limWave').value }));
+      } catch (error) { /* tallennus ei onnistunut */ }
+      if (weatherData.length > 0) updateSimulation(Number(document.getElementById('routeSlider').value) / 100);
+    }));
+    document.getElementById('startTime').addEventListener('change', () => {
+      if (weatherData.length > 0) updateSimulation(Number(document.getElementById('routeSlider').value) / 100);
     });
 
     document.getElementById('startTime').value = getDefaultStartTime();
