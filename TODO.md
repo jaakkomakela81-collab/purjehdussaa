@@ -34,3 +34,9 @@
       (14 m/s → 22 m/s); "Ehdota paras lähtöaika" karsii ensin rajojen ylitykset ja vertaa sitten
       0,5 × keskiarvo + 0,5 × vaikein kohta. Kertoo selvästi, jos kaikki vaihtoehdot ylittävät rajan.
 - [ ] Säädä oletusrajat omalle veneelle (nykyiset ovat yleisarvaus)
+- [x] Ennustekaavio (📈-painike kartalla): tuuli+puuska (m/s) ja aallokko (m) tunneittain, pahin arvo
+      reitin varrella; turvarajat viivoina, ylitystunnit punaisella taustalla, reitin kesto harmaana.
+      Napautus/klikkaus asettaa lähtöajan, nuolinäppäimet + Enter toimivat, taulukkonäkymä päivittäin.
+- [x] "Ehdota paras lähtöaika" näyttää top 3 -vaihtoehdon (väh. 6 h välein, syyt: tuuli-, puuska- ja
+      aaltoväli, rajojen tila); valinta asettaa lähtöajan.
+- [ ] Tarkista kaavion luettavuus oikealla puhelimella (iPhone SE -kokoinen näyttö, aurinko)

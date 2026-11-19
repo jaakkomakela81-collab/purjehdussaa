@@ -93,7 +93,7 @@
     }
 
     .collapsible-controls {
-      display: flex; flex-direction: column; gap: 6px; max-height: 360px; opacity: 1; overflow: hidden; transition: max-height .35s ease, opacity .25s ease, margin .25s ease;
+      display: flex; flex-direction: column; gap: 6px; max-height: 470px; opacity: 1; overflow: hidden; transition: max-height .35s ease, opacity .25s ease, margin .25s ease;
     }
     .collapsible-controls.collapsed { max-height: 0; opacity: 0; margin: 0; pointer-events: none; }
 
@@ -140,6 +140,25 @@
       content: ''; position: absolute; top: 16px; left: -5px; width: 10px; height: 10px; background: white; border-radius: 50%;
     }
 
+    .map-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .best-options { display: flex; flex-direction: column; gap: 4px; }
+    .best-options:empty { display: none; }
+    .best-option {
+      text-align: left; background: #0f172a; border: 1px solid #475569; color: #cbd5e1; border-radius: 6px; padding: 5px 8px; font-size: 10px; line-height: 1.35; cursor: pointer;
+    }
+    .best-option strong { color: #f8fafc; }
+    .best-option[aria-pressed="true"] { border-color: #38bdf8; box-shadow: inset 0 0 0 1px #38bdf8; }
+    .chart-modal { width: min(720px, 100%); max-height: 92dvh; overflow-y: auto; }
+    .chart-readout { min-height: 32px; margin-top: 6px; font-size: 11px; color: #cbd5e1; line-height: 1.5; }
+    .chart-readout strong { color: #f8fafc; font-size: 12px; }
+    .chart-readout .key { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin: 0 4px 0 8px; }
+    #chartBody svg { display: block; width: 100%; touch-action: pan-y; cursor: crosshair; }
+    #chartBody svg:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+    .chart-table summary { cursor: pointer; font-size: 10px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-top: 8px; }
+    .chart-table table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+    .chart-table th, .chart-table td { text-align: right; padding: 3px 6px; border-bottom: 1px solid #334155; font-variant-numeric: tabular-nums; }
+    .chart-table th:first-child, .chart-table td:first-child { text-align: left; }
+    .chart-table th { color: #94a3b8; font-weight: 700; }
     .modal-overlay {
       position: fixed; inset: 0; background: rgba(0,0,0,.72); display: flex; align-items: center; justify-content: center; padding: 16px; opacity: 0; pointer-events: none; transition: opacity .25s ease; z-index: 2000;
     }
@@ -164,6 +183,7 @@
     <div class="map-floating-controls">
       <button class="map-btn" id="btnMenu" title="Reitit ja info">⋮</button>
       <button class="map-btn" id="btnGps" title="GPS-seuranta">📍</button>
+      <button class="map-btn" id="btnChart" title="Ennustekaavio (tuuli, puuska, aallokko)" aria-label="Ennustekaavio" disabled>📈</button>
     </div>
 
     <div class="route-menu" id="routeMenu">
@@ -280,6 +300,7 @@
           <button class="action-btn btn-secondary" id="btnFindBestTime" disabled>Ehdota paras lähtöaika</button>
         </div>
         <div class="hint-text" id="bestTimeResult"></div>
+        <div class="best-options" id="bestTimeOptions"></div>
 
         <div class="btn-group">
           <button class="action-btn btn-danger" id="btnClear">Tyhjennä</button>
@@ -289,6 +310,23 @@
       </div>
 
       <button class="toggle-controls-btn" id="btnToggleControls">⚙️ Asetukset & Reitti ▲</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="chartModal">
+    <div class="modal-content chart-modal" role="dialog" aria-labelledby="chartTitle">
+      <div class="modal-header">
+        <span class="modal-title" id="chartTitle">Ennuste reitin varrella</span>
+        <button class="modal-close" id="btnCloseChart" aria-label="Sulje">&times;</button>
+      </div>
+      <div class="hint-text" id="chartSub" style="margin-top:8px"></div>
+      <div class="chart-readout" id="chartReadout" aria-live="polite"></div>
+      <div id="chartBody"></div>
+      <details class="chart-table">
+        <summary>Taulukko</summary>
+        <div id="chartTable"></div>
+      </details>
+      <div class="hint-text" style="margin-top:6px">Napauta tai klikkaa kaaviota asettaaksesi lähtöajan. Nuolinäppäimet siirtävät valintaa, Enter vahvistaa.</div>
     </div>
   </div>
 
@@ -314,6 +352,10 @@
         <div class="info-item">
           <span class="info-label">⏱️ GPS ja reitti</span>
           <span class="info-val">Lähtöaika ohjaa venettä eteenpäin. GPS:n ollessa käytössä näytetään, jääkö vene jälkeen reitistä.</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">📈 Ennustekaavio</span>
+          <span class="info-val">Kartan 📈-painike avaa tuulen, puuskan ja aallokon tuntiennusteen (pahin arvo reitin varrella). Napauttamalla kaaviota asetat lähtöajan, ja harmaa alue näyttää reitin keston.</span>
         </div>
         <div class="info-item">
           <span class="info-label">🛟 Turvarajat</span>
@@ -488,7 +530,9 @@
       document.getElementById('routeSlider').disabled = true;
       document.getElementById('routeSlider').value = 0;
       document.getElementById('btnFindBestTime').disabled = true;
+      document.getElementById('btnChart').disabled = true;
       document.getElementById('bestTimeResult').textContent = '';
+      document.getElementById('bestTimeOptions').textContent = '';
       if (removeCurrentSave) localStorage.removeItem('sailingRouteData');
       setBanner('Klikkaa karttaa lisätäksesi reittipisteitä.');
     }
@@ -846,6 +890,7 @@
       let total = 0;
       let max = 0;
       let violationPoints = 0;
+      const stats = { windMin: null, windMax: null, gustMax: null, waveMax: null };
       const exceed = { wind: { count: 0, peak: null }, gust: { count: 0, peak: null }, wave: { count: 0, peak: null } };
       const values = { wind: 'windSpeed', gust: 'gustSpeed', wave: 'waveHeight' };
       for (let i = 0; i <= samples; i++) {
@@ -853,6 +898,12 @@
         if (!cond || !cond.diffs) return null;
         total += cond.diffs.total;
         max = Math.max(max, cond.diffs.total);
+        if (cond.windSpeed !== null) {
+          stats.windMin = Math.min(stats.windMin ?? Infinity, cond.windSpeed);
+          stats.windMax = Math.max(stats.windMax ?? -Infinity, cond.windSpeed);
+        }
+        if (cond.gustSpeed !== null) stats.gustMax = Math.max(stats.gustMax ?? -Infinity, cond.gustSpeed);
+        if (cond.waveHeight !== null) stats.waveMax = Math.max(stats.waveMax ?? -Infinity, cond.waveHeight);
         if (cond.exceeded.length > 0) violationPoints++;
         cond.exceeded.forEach(key => {
           exceed[key].count++;
@@ -861,7 +912,7 @@
       }
       const points = samples + 1;
       const avg = total / points;
-      return { avg, max, score: 0.5 * avg + 0.5 * max, violationPoints, points, exceed };
+      return { avg, max, score: 0.5 * avg + 0.5 * max, violationPoints, points, exceed, stats };
     }
 
     function limitsActive() {
@@ -913,23 +964,73 @@
       return 'ilta';
     }
 
-    // Paras lähtöaika: ensin vähiten turvarajojen ylityskohtia, sitten pienin score (keskiarvo + pahin kohta).
-    function findBestDepartureTime(minDays, maxDays, preferredDayPart = '') {
-      if (weatherData.length === 0 || marineData.length === 0) return null;
+    // Lähtöaikojen paremmuusjärjestys: ensin vähiten turvarajojen ylityskohtia, sitten pienin score (keskiarvo + pahin kohta).
+    // Palauttaa enintään `count` toisistaan vähintään `minGapHours` tunnin päässä olevaa vaihtoehtoa, jotta ehdotukset eivät ole saman ikkunan peräkkäisiä tunteja.
+    function rankDepartureTimes(minDays, maxDays, preferredDayPart = '', count = 3, minGapHours = 6) {
+      if (weatherData.length === 0 || marineData.length === 0) return [];
       const start = new Date();
       start.setMinutes(0, 0, 0);
       const fromHour = Math.max(0, Math.round(minDays * 24));
       const toHour = Math.max(fromHour, Math.round(maxDays * 24));
-      let best = null;
+      const candidates = [];
       for (let h = fromHour; h <= toHour; h++) {
         const candidate = new Date(start.getTime() + h * 60 * 60 * 1000);
         if (preferredDayPart && getDayPartLabel(candidate) !== preferredDayPart) continue;
         const r = evaluateRouteDifficulty(candidate);
         if (r === null) continue;
-        const better = !best || r.violationPoints < best.violationPoints || (r.violationPoints === best.violationPoints && r.score < best.score);
-        if (better) best = { time: candidate, avgDiff: r.avg, maxDiff: r.max, score: r.score, violationPoints: r.violationPoints, evaluation: r };
+        candidates.push({ time: candidate, hour: h, avgDiff: r.avg, maxDiff: r.max, score: r.score, violationPoints: r.violationPoints, evaluation: r });
       }
-      return best;
+      candidates.sort((x, y) => x.violationPoints - y.violationPoints || x.score - y.score || x.hour - y.hour);
+      const picked = [];
+      for (const c of candidates) {
+        if (picked.every(p => Math.abs(p.hour - c.hour) >= minGapHours)) picked.push(c);
+        if (picked.length >= count) break;
+      }
+      return picked;
+    }
+
+    function findBestDepartureTime(minDays, maxDays, preferredDayPart = '') {
+      return rankDepartureTimes(minDays, maxDays, preferredDayPart, 1)[0] || null;
+    }
+
+    function formatDeparture(date) {
+      const weekday = date.toLocaleDateString('fi-FI', { weekday: 'short' });
+      const dateStr = date.toLocaleDateString('fi-FI', { day: 'numeric', month: 'numeric' });
+      const timeStr = date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+      return `${weekday} ${dateStr} klo ${timeStr}`;
+    }
+
+    function setDeparture(date) {
+      document.getElementById('startTime').value = toLocalDatetimeInputValue(date);
+      lastRenderedTimeIdx = -1;
+      updateSimulation(Number(document.getElementById('routeSlider').value) / 100);
+      drawColoredRoute();
+    }
+
+    function renderBestOptions(options) {
+      const box = document.getElementById('bestTimeOptions');
+      box.textContent = '';
+      if (options.length < 2) return;
+      options.forEach((o, i) => {
+        const st = o.evaluation.stats;
+        const parts = [`vaikeus ${Math.round(o.avgDiff * 100)} % (pahin ${Math.round(o.maxDiff * 100)} %)`];
+        if (st.windMin !== null) parts.push(st.windMin.toFixed(0) === st.windMax.toFixed(0) ? `tuuli ${st.windMax.toFixed(0)} m/s` : `tuuli ${st.windMin.toFixed(0)}–${st.windMax.toFixed(0)} m/s`);
+        if (st.gustMax !== null) parts.push(`puuska ≤ ${st.gustMax.toFixed(0)} m/s`);
+        parts.push(st.waveMax !== null ? `aallot ≤ ${st.waveMax.toFixed(1)} m` : 'aaltodataa ei ole');
+        if (limitsActive()) parts.push(o.violationPoints > 0 ? `⚠ rajat ylittyvät ${o.violationPoints}/${o.evaluation.points} kohdassa` : '✓ rajoissa');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'best-option';
+        btn.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+        const head = document.createElement('strong');
+        head.textContent = `${i + 1}. ${formatDeparture(o.time)}`;
+        btn.append(head, ` · ${parts.join(' · ')}`);
+        btn.addEventListener('click', () => {
+          box.querySelectorAll('.best-option').forEach(el => el.setAttribute('aria-pressed', el === btn ? 'true' : 'false'));
+          setDeparture(o.time);
+        });
+        box.appendChild(btn);
+      });
     }
 
     function applyMetricColors(metricName, diff) {
@@ -1185,6 +1286,7 @@
         document.getElementById('routeSlider').disabled = false;
         document.getElementById('routeSlider').value = 0;
         document.getElementById('btnFindBestTime').disabled = false;
+        document.getElementById('btnChart').disabled = false;
         setBanner(marineMissing
           ? `Säätiedot ladattu. Aalto- ja virtatietoja ei saatu tälle alueelle.${storageNote}`
           : `Sää- ja virtaustiedot ladattu.${storageNote}`);
@@ -1365,8 +1467,10 @@
       const preferredDayPart = document.getElementById('preferredDayPart').value;
       const resultEl = document.getElementById('bestTimeResult');
       setBanner('Etsitään parasta lähtöaikaa...');
-      const best = findBestDepartureTime(minDays, maxDays, preferredDayPart);
+      const options = rankDepartureTimes(minDays, maxDays, preferredDayPart, 3, 6);
+      const best = options[0];
       if (!best) {
+        document.getElementById('bestTimeOptions').textContent = '';
         resultEl.textContent = 'Ei löytynyt kattavaa ennustedataa valitulta aikaväliltä/vuorokaudenajalta. Hae sää uudelleen, pienennä aikaväliä tai valitse toinen vuorokaudenaika.';
         setBanner('Parasta lähtöaikaa ei löytynyt.');
         return;
@@ -1382,11 +1486,312 @@
           : ' ✓ Pysyy turvarajoissa.';
       }
       resultEl.textContent = text;
+      renderBestOptions(options);
       lastRenderedTimeIdx = -1;
       updateSimulation(0);
       drawColoredRoute();
       setBanner('Paras lähtöaika ehdotettu — voit vielä säätää sitä käsin.');
     });
+
+    // ---------------- Ennustekaavio ----------------
+    // Kullekin tunnille: pahin arvo reitin varrella (max kaikista säänäytepisteistä).
+    // Yksi akseli per kaavio: tuuli+puuska (m/s) ja aallokko (m) ovat omissa paneeleissaan.
+    const CHART = { wind: '#3987e5', gust: '#d95926', wave: '#199e70', limit: '#d03b3b', grid: '#334155', ink: '#e2e8f0', muted: '#94a3b8', window: 'rgba(148,163,184,0.14)', exceed: 'rgba(208,59,59,0.16)' };
+    let chartRows = [];
+    let chartHoverIdx = null;
+
+    function maxNullable(a, b) {
+      if (b === null) return a;
+      return a === null ? b : Math.max(a, b);
+    }
+
+    function buildForecastRows() {
+      const times = weatherData[0]?.hourly?.time;
+      if (!Array.isArray(times)) return [];
+      const nowIso = new Date(Date.now() - 3600e3).toISOString().slice(0, 13) + ':00';
+      let from = times.findIndex(t => t >= nowIso);
+      if (from < 0) from = 0;
+      const rows = [];
+      for (let i = from; i < times.length; i++) {
+        let wind = null, gust = null, wave = null;
+        for (let k = 0; k < weatherData.length; k++) {
+          const h = weatherData[k]?.hourly;
+          wind = maxNullable(wind, toNum(h?.wind_speed_10m?.[i]));
+          gust = maxNullable(gust, toNum(h?.wind_gusts_10m?.[i]));
+          wave = maxNullable(wave, toNum(marineData[k]?.hourly?.wave_height?.[i]));
+        }
+        rows.push({
+          t: new Date(`${times[i]}Z`), wind, gust, wave,
+          windOver: (wind !== null && wind > routeLimits.maxWind) || (gust !== null && gust > routeLimits.maxGust),
+          waveOver: wave !== null && wave > routeLimits.maxWave
+        });
+      }
+      return rows;
+    }
+
+    function svgEl(name, attrs = {}, text) {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+      Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+      if (text !== undefined) el.textContent = text;
+      return el;
+    }
+
+    function niceAxis(maxValue) {
+      const step = maxValue <= 6 ? 1 : maxValue <= 12 ? 2 : maxValue <= 30 ? 5 : 10;
+      const top = Math.max(step * 2, Math.ceil(maxValue / step) * step);
+      const ticks = [];
+      for (let v = 0; v <= top; v += step) ticks.push(v);
+      return { top, ticks };
+    }
+
+    function renderForecastChart() {
+      const body = document.getElementById('chartBody');
+      body.textContent = '';
+      chartRows = buildForecastRows();
+      const sub = document.getElementById('chartSub');
+      if (chartRows.length < 2) {
+        sub.textContent = 'Ei ennustedataa. Hae sää ensin.';
+        return;
+      }
+      sub.textContent = 'Pahin arvo reitin varrella kullakin tunnilla. Harmaa alue = reitin kesto valitulla lähtöajalla. Punainen tausta = turvaraja ylittyy.';
+
+      const W = Math.max(280, body.clientWidth || 340);
+      const padL = 32, padR = 10;
+      const plotW = W - padL - padR;
+      const n = chartRows.length;
+      const xAt = i => padL + (i / (n - 1)) * plotW;
+      const stepW = plotW / (n - 1);
+
+      const hasWave = chartRows.some(r => r.wave !== null);
+      const windMax = chartRows.reduce((m, r) => Math.max(m, r.wind ?? 0, r.gust ?? 0), 0);
+      const limitWindShown = [routeLimits.maxWind, routeLimits.maxGust].filter(v => Number.isFinite(v) && v <= windMax * 1.5 + 3);
+      const waveMaxData = chartRows.reduce((m, r) => Math.max(m, r.wave ?? 0), 0);
+      const waveLimitShown = Number.isFinite(routeLimits.maxWave) && routeLimits.maxWave <= waveMaxData * 1.5 + 0.5;
+      const axisW = niceAxis(Math.max(windMax, ...limitWindShown, 1));
+      const axisV = niceAxis(Math.max(waveMaxData, waveLimitShown ? routeLimits.maxWave : 0, 0.5));
+
+      const p1 = { top: 26, h: 120 };
+      const p2 = { top: p1.top + p1.h + 40, h: 80 };
+      const H = p2.top + p2.h + 22;
+      const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', tabindex: '0', 'aria-label': 'Tuuli-, puuska- ja aallokkoennuste reitin varrella tunneittain' });
+      const yOf = (panel, axis, v) => panel.top + panel.h - (v / axis.top) * panel.h;
+
+      // Vuorokausirajat (paikallinen keskiyö) pystyviivoina + päivämerkit
+      rowsDayTicks(chartRows).forEach(({ i, label }) => {
+        const x = xAt(i);
+        [p1, p2].forEach(p => svg.appendChild(svgEl('line', { x1: x, x2: x, y1: p.top, y2: p.top + p.h, stroke: CHART.grid, 'stroke-width': 1 })));
+        svg.appendChild(svgEl('text', { x: x + 3, y: p2.top + p2.h + 14, fill: CHART.muted, 'font-size': 9 }, label));
+      });
+
+      // Paneelit: otsikko, y-akseli, vaaka-ruudukko
+      const drawPanel = (panel, axis, title, unit) => {
+        svg.appendChild(svgEl('text', { x: padL, y: panel.top - 12, fill: CHART.ink, 'font-size': 11, 'font-weight': 700 }, title));
+        axis.ticks.forEach(v => {
+          const y = yOf(panel, axis, v);
+          svg.appendChild(svgEl('line', { x1: padL, x2: padL + plotW, y1: y, y2: y, stroke: CHART.grid, 'stroke-width': 1 }));
+          svg.appendChild(svgEl('text', { x: padL - 5, y: y + 3, fill: CHART.muted, 'font-size': 9, 'text-anchor': 'end' }, String(v)));
+        });
+      };
+      drawPanel(p1, axisW, 'Tuuli ja puuska (m/s)');
+      drawPanel(p2, axisV, 'Aallokko (m)');
+
+      // Selite (kaksi sarjaa -> legend)
+      const keyY = p1.top - 16;
+      let kx = padL + 150;
+      [['Keskituuli', CHART.wind], ['Puuska', CHART.gust]].forEach(([name, color]) => {
+        svg.appendChild(svgEl('line', { x1: kx, x2: kx + 14, y1: keyY + 4, y2: keyY + 4, stroke: color, 'stroke-width': 2, 'stroke-linecap': 'round' }));
+        const t = svgEl('text', { x: kx + 18, y: keyY + 7, fill: CHART.muted, 'font-size': 9 }, name);
+        svg.appendChild(t);
+        kx += 18 + name.length * 5 + 10;
+      });
+
+      // Ylitystaustat
+      chartRows.forEach((r, i) => {
+        const x = Math.max(padL, xAt(i) - stepW / 2);
+        const w = Math.min(stepW, padL + plotW - x);
+        if (r.windOver) svg.appendChild(svgEl('rect', { x, y: p1.top, width: w + 0.5, height: p1.h, fill: CHART.exceed }));
+        if (r.waveOver) svg.appendChild(svgEl('rect', { x, y: p2.top, width: w + 0.5, height: p2.h, fill: CHART.exceed }));
+      });
+
+      // Reitin kesto lähtöajasta alkaen
+      const start = readStartTime();
+      const dur = getExactRouteGeometry().totalHours || 0;
+      const t0 = chartRows[0].t.getTime();
+      const tN = chartRows[n - 1].t.getTime();
+      const xTime = ms => padL + ((ms - t0) / (tN - t0)) * plotW;
+      const xs = Math.min(padL + plotW, Math.max(padL, xTime(start.getTime())));
+      const xe = Math.min(padL + plotW, Math.max(padL, xTime(start.getTime() + dur * 3600e3)));
+      const startInRange = start.getTime() >= t0 && start.getTime() <= tN;
+      if (xe > xs) [p1, p2].forEach(p => svg.appendChild(svgEl('rect', { x: xs, y: p.top, width: xe - xs, height: p.h, fill: CHART.window })));
+
+      // Rajaviivat (kiinteä hiusviiva, selite tekstinä)
+      const limitLine = (panel, axis, value, label) => {
+        const y = yOf(panel, axis, value);
+        svg.appendChild(svgEl('line', { x1: padL, x2: padL + plotW, y1: y, y2: y, stroke: CHART.limit, 'stroke-width': 1 }));
+        svg.appendChild(svgEl('text', { x: padL + plotW - 2, y: y - 3, fill: CHART.muted, 'font-size': 9, 'text-anchor': 'end' }, label));
+      };
+      if (Number.isFinite(routeLimits.maxWind) && routeLimits.maxWind <= axisW.top) limitLine(p1, axisW, routeLimits.maxWind, `tuuliraja ${routeLimits.maxWind}`);
+      if (Number.isFinite(routeLimits.maxGust) && routeLimits.maxGust <= axisW.top) limitLine(p1, axisW, routeLimits.maxGust, `puuskaraja ${routeLimits.maxGust}`);
+      if (waveLimitShown && routeLimits.maxWave <= axisV.top) limitLine(p2, axisV, routeLimits.maxWave, `aaltoraja ${routeLimits.maxWave}`);
+
+      // Viivat (katkeavat puuttuvan datan kohdalla)
+      const linePath = (key, panel, axis) => {
+        let d = '';
+        let pen = false;
+        chartRows.forEach((r, i) => {
+          if (r[key] === null) { pen = false; return; }
+          d += `${pen ? 'L' : 'M'}${xAt(i).toFixed(1)} ${yOf(panel, axis, r[key]).toFixed(1)}`;
+          pen = true;
+        });
+        return d;
+      };
+      const addLine = (key, color, panel, axis) => svg.appendChild(svgEl('path', { d: linePath(key, panel, axis), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      addLine('gust', CHART.gust, p1, axisW);
+      addLine('wind', CHART.wind, p1, axisW);
+      if (hasWave) addLine('wave', CHART.wave, p2, axisV);
+      else svg.appendChild(svgEl('text', { x: padL + plotW / 2, y: p2.top + p2.h / 2 + 3, fill: CHART.muted, 'font-size': 10, 'text-anchor': 'middle' }, 'Ei aaltodataa tälle alueelle'));
+
+      // Valikoidut suorat arvomerkinnät: ääriarvot
+      const labelPeak = (key, color, panel, axis, unit, digits) => {
+        let bi = -1;
+        chartRows.forEach((r, i) => { if (r[key] !== null && (bi < 0 || r[key] > chartRows[bi][key])) bi = i; });
+        if (bi < 0) return;
+        const x = xAt(bi), y = yOf(panel, axis, chartRows[bi][key]);
+        svg.appendChild(svgEl('circle', { cx: x, cy: y, r: 4, fill: color, stroke: '#1e293b', 'stroke-width': 2 }));
+        const anchor = x > W - 60 ? 'end' : x < padL + 40 ? 'start' : 'middle';
+        svg.appendChild(svgEl('text', { x, y: Math.max(panel.top + 8, y - 8), fill: CHART.ink, 'font-size': 10, 'font-weight': 700, 'text-anchor': anchor }, `${chartRows[bi][key].toFixed(digits)} ${unit}`));
+      };
+      labelPeak('gust', CHART.gust, p1, axisW, 'm/s', 1);
+      if (hasWave) labelPeak('wave', CHART.wave, p2, axisV, 'm', 1);
+
+      // Lähtöhetki
+      if (startInRange) {
+        [p1, p2].forEach(p => svg.appendChild(svgEl('line', { x1: xs, x2: xs, y1: p.top, y2: p.top + p.h, stroke: CHART.ink, 'stroke-width': 1.5 })));
+        svg.appendChild(svgEl('text', { x: Math.min(xs + 3, padL + plotW - 28), y: p1.top + p1.h + 12, fill: CHART.ink, 'font-size': 9, 'font-weight': 700 }, 'Lähtö'));
+      }
+
+      // Hover/valinta: ristikkoviiva + valintaindikaattori
+      const cross = svgEl('line', { y1: p1.top, y2: p2.top + p2.h, stroke: CHART.ink, 'stroke-width': 1, opacity: 0.55, visibility: 'hidden', 'pointer-events': 'none' });
+      svg.appendChild(cross);
+      const hit = svgEl('rect', { x: padL, y: 0, width: plotW, height: H, fill: 'transparent' });
+      svg.appendChild(hit);
+
+      const showIdx = idx => {
+        chartHoverIdx = Math.max(0, Math.min(n - 1, idx));
+        const x = xAt(chartHoverIdx);
+        cross.setAttribute('x1', x);
+        cross.setAttribute('x2', x);
+        cross.setAttribute('visibility', 'visible');
+        renderChartReadout(chartRows[chartHoverIdx]);
+      };
+      const idxFromEvent = ev => {
+        const rect = svg.getBoundingClientRect();
+        const x = (ev.clientX - rect.left) * (W / rect.width);
+        return Math.round(((x - padL) / plotW) * (n - 1));
+      };
+      hit.addEventListener('pointermove', ev => showIdx(idxFromEvent(ev)));
+      hit.addEventListener('click', ev => { showIdx(idxFromEvent(ev)); chooseDepartureFromChart(chartRows[chartHoverIdx].t); });
+      svg.addEventListener('keydown', ev => {
+        if (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') {
+          ev.preventDefault();
+          const from = chartHoverIdx ?? Math.max(0, Math.round((readStartTime().getTime() - t0) / 3600e3));
+          showIdx(from + (ev.key === 'ArrowRight' ? 1 : -1) * (ev.shiftKey ? 6 : 1));
+        } else if (ev.key === 'Enter' && chartHoverIdx !== null) {
+          ev.preventDefault();
+          chooseDepartureFromChart(chartRows[chartHoverIdx].t);
+        }
+      });
+
+      body.appendChild(svg);
+      renderChartTable();
+      if (chartHoverIdx !== null && chartHoverIdx < n) showIdx(chartHoverIdx);
+      else renderChartReadout(null);
+    }
+
+    function rowsDayTicks(rows) {
+      const ticks = [];
+      rows.forEach((r, i) => {
+        if (r.t.getHours() === 0 && i > 0) ticks.push({ i, label: r.t.toLocaleDateString('fi-FI', { weekday: 'short', day: 'numeric' }) });
+      });
+      return ticks;
+    }
+
+    function renderChartReadout(row) {
+      const el = document.getElementById('chartReadout');
+      el.textContent = '';
+      if (!row) {
+        el.textContent = 'Liikuta osoitinta kaavion päällä nähdäksesi tunnin arvot.';
+        return;
+      }
+      const head = document.createElement('strong');
+      head.textContent = formatDeparture(row.t);
+      el.appendChild(head);
+      const add = (color, label, value) => {
+        const key = document.createElement('span');
+        key.className = 'key';
+        key.style.background = color;
+        el.append(key, `${label} `);
+        const v = document.createElement('strong');
+        v.textContent = value;
+        el.appendChild(v);
+      };
+      add(CHART.wind, 'tuuli', row.wind === null ? '--' : `${row.wind.toFixed(1)} m/s`);
+      add(CHART.gust, 'puuska', row.gust === null ? '--' : `${row.gust.toFixed(1)} m/s`);
+      add(CHART.wave, 'aallot', row.wave === null ? '--' : `${row.wave.toFixed(1)} m`);
+      if (row.windOver || row.waveOver) {
+        const warn = document.createElement('span');
+        warn.textContent = ` ⚠ ylittää rajan: ${[row.windOver ? 'tuuli/puuska' : '', row.waveOver ? 'aallokko' : ''].filter(Boolean).join(', ')}`;
+        el.appendChild(warn);
+      }
+    }
+
+    function renderChartTable() {
+      const host = document.getElementById('chartTable');
+      host.textContent = '';
+      const days = new Map();
+      chartRows.forEach(r => {
+        const key = r.t.toLocaleDateString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric' });
+        const d = days.get(key) || { wind: null, gust: null, wave: null, over: 0 };
+        d.wind = maxNullable(d.wind, r.wind);
+        d.gust = maxNullable(d.gust, r.gust);
+        d.wave = maxNullable(d.wave, r.wave);
+        if (r.windOver || r.waveOver) d.over++;
+        days.set(key, d);
+      });
+      const table = document.createElement('table');
+      const headRow = table.createTHead().insertRow();
+      ['Päivä', 'Tuuli max m/s', 'Puuska max m/s', 'Aallokko max m', 'Rajan ylitys h'].forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        headRow.appendChild(th);
+      });
+      const tbody = table.createTBody();
+      days.forEach((d, key) => {
+        const tr = tbody.insertRow();
+        [key, d.wind === null ? '--' : d.wind.toFixed(1), d.gust === null ? '--' : d.gust.toFixed(1), d.wave === null ? '--' : d.wave.toFixed(1), String(d.over)].forEach(v => {
+          tr.insertCell().textContent = v;
+        });
+      });
+      host.appendChild(table);
+    }
+
+    function chooseDepartureFromChart(date) {
+      setDeparture(date);
+      document.getElementById('bestTimeOptions').querySelectorAll('.best-option').forEach(el => el.setAttribute('aria-pressed', 'false'));
+      renderForecastChart();
+    }
+
+    function openChart() {
+      if (weatherData.length === 0) return;
+      chartHoverIdx = null;
+      document.getElementById('routeMenu').classList.remove('active');
+      document.getElementById('chartModal').classList.add('active');
+      renderForecastChart();
+    }
+    document.getElementById('btnChart').addEventListener('click', openChart);
+    document.getElementById('btnCloseChart').addEventListener('click', () => document.getElementById('chartModal').classList.remove('active'));
+    document.getElementById('chartModal').addEventListener('click', ev => { if (ev.target.id === 'chartModal') ev.currentTarget.classList.remove('active'); });
+    window.addEventListener('resize', () => { if (document.getElementById('chartModal').classList.contains('active')) renderForecastChart(); });
 
     document.getElementById('btnMenu').addEventListener('click', () => {
       document.getElementById('routeMenu').classList.toggle('active');
@@ -1550,6 +1955,7 @@
         dataFetchedAt = cached.savedAt || null;
         document.getElementById('routeSlider').disabled = false;
         document.getElementById('btnFindBestTime').disabled = false;
+        document.getElementById('btnChart').disabled = false;
         const ageMs = dataFetchedAt ? Date.now() - new Date(dataFetchedAt).getTime() : Infinity;
         setBanner(`Tallennettu säädata ladattu (haettu ${dataFetchedAt ? formatAge(dataFetchedAt) : 'tuntematon aika sitten'}).${ageMs > 6 * 3600 * 1000 ? ' Data on vanhaa: päivitä Hae sää -painikkeella kun verkko on käytettävissä.' : ''}`);
         updateSimulation(0);
