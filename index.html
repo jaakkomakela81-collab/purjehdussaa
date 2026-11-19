@@ -7,6 +7,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Merisää & Reittisuunnittelu</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.css" />
@@ -303,14 +306,11 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.js"></script>
   <script>
+    // Service worker on omassa tiedostossa (sw.js): blob:-URL-rekisteröinti ei toimi selaimissa.
     if ('serviceWorker' in navigator) {
-      const swBlob = new Blob([`
-        const CACHE_NAME = 'merisaa-v3';
-        const ASSETS = ['https://unpkg.com/leaflet@1.9.4/dist/leaflet.css','https://unpkg.com/leaflet@1.9.4/dist/leaflet.js','https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.css','https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.2/dist/leaflet-velocity.min.js'];
-        self.addEventListener('install', e => e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))));
-        self.addEventListener('fetch', e => e.respondWith(caches.match(e.request).then(res => res || fetch(e.request).catch(() => caches.match(e.request)))));
-      `], { type: 'application/javascript' });
-      navigator.serviceWorker.register(URL.createObjectURL(swBlob)).catch(error => console.log('SW error:', error));
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(error => console.log('SW error:', error));
+      });
     }
 
     const map = L.map('map').setView([63.5, 20.5], 7);
@@ -345,6 +345,7 @@
     let gridMarineData = [];
     let gridBounds = null;
     let sampleRoutePointsData = [];
+    let dataFetchedAt = null;
     const GRID_SIZE = 9;
 
     let gpsWatchId = null;
@@ -381,6 +382,35 @@
 
     function setBanner(message) {
       document.getElementById('banner').textContent = message;
+    }
+
+    // Puuttuva arvo (null/undefined/NaN) -> null. Ei koskaan 0, jotta "ei dataa" ei näytä tyyneltä säältä.
+    function toNum(value) {
+      if (value === null || value === undefined || value === '') return null;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function fmtNum(value, digits = 1) {
+      return value === null || value === undefined ? '--' : value.toFixed(digits);
+    }
+
+    function formatAge(iso) {
+      const ms = Date.now() - new Date(iso).getTime();
+      if (!Number.isFinite(ms) || ms < 0) return 'tuntematon ikä';
+      const min = Math.round(ms / 60000);
+      if (min < 2) return 'juuri nyt';
+      if (min < 120) return `${min} min sitten`;
+      const h = Math.round(min / 60);
+      if (h < 48) return `${h} h sitten`;
+      return `${Math.round(h / 24)} vrk sitten`;
+    }
+
+    function forecastRangeText() {
+      const times = weatherData[0]?.hourly?.time;
+      if (!Array.isArray(times) || times.length === 0) return '';
+      const fmt = t => new Date(`${t}Z`).toLocaleString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return `${fmt(times[0])} – ${fmt(times[times.length - 1])}`;
     }
 
     const ROUTE_LIBRARY_KEY = 'sailingRouteLibrary';
@@ -420,6 +450,7 @@
       gridWeatherData = [];
       gridMarineData = [];
       sampleRoutePointsData = [];
+      dataFetchedAt = null;
       gridBounds = null;
       activeMetric = null;
       lastRenderedTimeIdx = -1;
@@ -685,7 +716,7 @@
     });
 
     function getConditionsAtProgress(progress, options = {}) {
-      const { startDateOverride = null, strict = false } = options;
+      const { startDateOverride = null } = options;
       const geom = getExactRouteGeometry();
       if (waypoints.length < 2 || geom.segments.length === 0) return null;
 
@@ -706,37 +737,45 @@
       const sampleIdx = Math.min(Math.floor(progress * sampleRoutePointsData.length), sampleRoutePointsData.length - 1);
       const pointWeather = weatherData[sampleIdx]?.hourly;
       const pointMarine = marineData[sampleIdx]?.hourly;
-      if (!pointWeather) return { pos, curDate, currentDist };
+      if (!pointWeather || !Array.isArray(pointWeather.time)) return { pos, curDate, currentDist, noData: true };
 
+      // Ei paluuta indeksiin 0: jos ennuste ei kata hetkeä, sitä ei esitetä jonkin toisen hetken säänä.
       const targetIso = curDate.toISOString().slice(0, 13) + ':00';
-      let timeIdx = pointWeather.time.findIndex(t => t.startsWith(targetIso));
-      if (timeIdx === -1) {
-        if (strict) return { pos, curDate, currentDist };
-        timeIdx = 0;
+      const timeIdx = pointWeather.time.findIndex(t => t.startsWith(targetIso));
+      if (timeIdx === -1) return { pos, curDate, currentDist, outOfForecast: true };
+
+      // Puuttuva arvo pysyy null-arvona (ei 0), jotta se ei näytä tyyneltä säältä.
+      const at = series => toNum(series?.[timeIdx]);
+      const windSpeed = at(pointWeather.wind_speed_10m);
+      const windDir = at(pointWeather.wind_direction_10m);
+      const gustSpeed = at(pointWeather.wind_gusts_10m);
+      const tempC = at(pointWeather.temperature_2m);
+      const weatherCode = at(pointWeather.weather_code);
+      const rain = at(pointWeather.precipitation);
+      const waveHeight = at(pointMarine?.wave_height);
+      const waveDir = at(pointMarine?.wave_direction);
+      const currentVelMS = at(pointMarine?.ocean_current_velocity);
+      const currentDir = at(pointMarine?.ocean_current_direction);
+      const currentKnots = currentVelMS === null ? null : currentVelMS * 1.94384;
+
+      let relAngle = null;
+      if (windDir !== null) {
+        relAngle = Math.abs(windDir - currentSegHeading) % 360;
+        if (relAngle > 180) relAngle = 360 - relAngle;
+        relAngle = Math.round(relAngle);
       }
 
-      const windSpeed = Number(pointWeather.wind_speed_10m?.[timeIdx]) || 0;
-      const windDir = Number(pointWeather.wind_direction_10m?.[timeIdx]) || 0;
-      const gustSpeed = Number(pointWeather.wind_gusts_10m?.[timeIdx]) || 0;
-      const tempC = Number(pointWeather.temperature_2m?.[timeIdx]) || 0;
-      const weatherCode = Number(pointWeather.weather_code?.[timeIdx]) || 0;
-      const rain = Number(pointWeather.precipitation?.[timeIdx]) || 0;
-      const waveHeight = Number(pointMarine?.wave_height?.[timeIdx]) || 0;
-      const waveDir = Number(pointMarine?.wave_direction?.[timeIdx]) || 0;
-      const currentVelMS = Number(pointMarine?.ocean_current_velocity?.[timeIdx]) || 0;
-      const currentDir = Number(pointMarine?.ocean_current_direction?.[timeIdx]) || 0;
-      const currentKnots = currentVelMS * 1.94384;
+      const angleDiff = relAngle === null ? null : relAngle <= 45 ? 1 : relAngle < 65 ? 1 - ((relAngle - 45) / 20) : relAngle < 150 ? 0 : 0.2;
+      const windDiff = windSpeed === null ? null : windSpeed < 2.5 ? 0.5 : windSpeed > 12 ? Math.min(1, (windSpeed - 12) / 6) : windSpeed > 8 ? (windSpeed - 8) / 8 : 0;
+      const waveDiff = waveHeight === null ? null : Math.min(1, waveHeight / 2);
+      const currentDiff = (currentKnots === null || currentDir === null) ? null : (Math.abs(currentDir - currentSegHeading) % 360) < 90 ? Math.min(1, currentKnots / 1.5) : 0;
+      const weatherDiff = weatherCode === null ? null : weatherCode >= 95 ? 1 : weatherCode >= 61 || weatherCode === 45 || weatherCode === 48 ? 0.6 : 0;
 
-      let relAngle = Math.abs(windDir - currentSegHeading) % 360;
-      if (relAngle > 180) relAngle = 360 - relAngle;
-      relAngle = Math.round(relAngle);
-
-      const angleDiff = relAngle <= 45 ? 1 : relAngle < 65 ? 1 - ((relAngle - 45) / 20) : relAngle < 150 ? 0 : 0.2;
-      const windDiff = windSpeed < 2.5 ? 0.5 : windSpeed > 12 ? Math.min(1, (windSpeed - 12) / 6) : windSpeed > 8 ? (windSpeed - 8) / 8 : 0;
-      const waveDiff = Math.min(1, waveHeight / 2);
-      const currentDiff = (Math.abs(currentDir - currentSegHeading) % 360) < 90 ? Math.min(1, currentKnots / 1.5) : 0;
-      const weatherDiff = weatherCode >= 95 ? 1 : weatherCode >= 61 || weatherCode === 45 || weatherCode === 48 ? 0.6 : 0;
-      const totalDiff = Math.min(1, Math.max(0, (angleDiff * 1.5 + windDiff + waveDiff + currentDiff + weatherDiff * 0.5) / 5));
+      // Kokonaisluku = painotettu keskiarvo vain niistä osatekijöistä, joille on dataa (painot summaavat 5:een kun kaikki ovat mukana).
+      const parts = [[angleDiff, 1.5], [windDiff, 1], [waveDiff, 1], [currentDiff, 1], [weatherDiff, 0.5]].filter(([d]) => d !== null);
+      if (parts.length === 0) return { pos, curDate, currentDist, noData: true };
+      const weightSum = parts.reduce((s, [, w]) => s + w, 0);
+      const totalDiff = Math.min(1, Math.max(0, parts.reduce((s, [d, w]) => s + d * w, 0) / weightSum));
 
       return {
         pos,
@@ -766,7 +805,7 @@
       let total = 0;
       let count = 0;
       for (let i = 0; i <= samples; i++) {
-        const cond = getConditionsAtProgress(i / samples, { startDateOverride: startDate, strict: true });
+        const cond = getConditionsAtProgress(i / samples, { startDateOverride: startDate });
         if (!cond || !cond.diffs) return null;
         total += cond.diffs.total;
         count++;
@@ -803,6 +842,16 @@
       const mapping = { total: 'box-time', wind: 'box-wind', angle: 'box-winddir', wave: 'box-wave', current: 'box-current', weather: 'box-weather' };
       const box = document.getElementById(mapping[metricName]);
       if (!box) return;
+      if (diff === null || diff === undefined) {
+        // Ei dataa -> neutraali väri (ei vihreä "hyvä sää").
+        box.style.backgroundColor = 'transparent';
+        box.style.borderColor = 'transparent';
+        const val = box.querySelector('.stat-val');
+        if (val) val.style.color = '#94a3b8';
+        const arrowId = { angle: 'windArrow', wave: 'waveArrow', current: 'currentArrow' }[metricName];
+        if (arrowId) document.getElementById(arrowId).style.color = '#94a3b8';
+        return;
+      }
       const hue = (1 - Math.min(1, Math.max(0, diff))) * 120;
       const bg = `hsla(${hue}, 80%, 40%, 0.18)`;
       const border = `hsla(${hue}, 80%, 52%, 0.5)`;
@@ -817,6 +866,7 @@
     }
 
     function relWindText(relAngle) {
+      if (relAngle === null || relAngle === undefined) return '--';
       if (relAngle < 40) return 'Vastatuuli';
       if (relAngle < 65) return 'Tiukka kryssi';
       if (relAngle < 110) return 'Sivutuuli';
@@ -836,10 +886,15 @@
       let prevPos = waypoints[0];
       for (let step = 1; step <= 60; step++) {
         const cond = getConditionsAtProgress(step / 60);
-        if (!cond || !cond.diffs) continue;
-        const diff = cond.diffs[activeMetric] ?? 0;
-        const hue = (1 - diff) * 120;
-        L.polyline([prevPos, cond.pos], { color: `hsl(${hue}, 90%, 45%)`, opacity: 0.95, weight: 5 }).addTo(routeLayerGroup);
+        if (!cond) continue;
+        const diff = cond.diffs ? cond.diffs[activeMetric] : null;
+        if (diff === null || diff === undefined) {
+          // Ei dataa tälle kohdalle (ennuste ei kata hetkeä tai arvo puuttuu): harmaa katkoviiva.
+          L.polyline([prevPos, cond.pos], { color: '#94a3b8', opacity: 0.8, weight: 4, dashArray: '6 8' }).addTo(routeLayerGroup);
+        } else {
+          const hue = (1 - diff) * 120;
+          L.polyline([prevPos, cond.pos], { color: `hsl(${hue}, 90%, 45%)`, opacity: 0.95, weight: 5 }).addTo(routeLayerGroup);
+        }
         prevPos = cond.pos;
       }
     }
@@ -982,24 +1037,63 @@
       const gridLons = gridPoints.map(pt => pt.lng.toFixed(4)).join(',');
       const asArray = data => Array.isArray(data) ? data : [data];
 
+      // Sää on pakollinen; meridata (aallot, virta) valinnainen: puuttuessaan tilalle tyhjä rakenne,
+      // jolloin aalto- ja virtatiedot näytetään "ei dataa" -tilassa kaatamatta koko hakua.
+      const emptyMarine = n => Array.from({ length: n }, () => ({ hourly: {} }));
+      const validLocations = (data, n) => Array.isArray(data) && data.length === n && data.every(d => Array.isArray(d?.hourly?.time));
+      const hadData = weatherData.length > 0;
+
       try {
-        const [weatherRes, marineRes, gridWeatherRes, gridMarineRes] = await Promise.all([
-          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${routeLats}&longitude=${routeLons}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601&forecast_days=7`),
-          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${routeLats}&longitude=${routeLons}&hourly=wave_height,wave_direction,ocean_current_velocity,ocean_current_direction&timeformat=iso8601&forecast_days=7`),
-          fetch(`https://api.open-meteo.com/v1/forecast?latitude=${gridLats}&longitude=${gridLons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=iso8601&forecast_days=7`),
-          fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${gridLats}&longitude=${gridLons}&hourly=ocean_current_velocity,ocean_current_direction&timeformat=iso8601&forecast_days=7`)
+        const [weatherRes, marineRes, gridWeatherRes, gridMarineRes] = await Promise.allSettled([
+          fetchJson(`https://api.open-meteo.com/v1/forecast?latitude=${routeLats}&longitude=${routeLons}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601&forecast_days=7`),
+          fetchJson(`https://marine-api.open-meteo.com/v1/marine?latitude=${routeLats}&longitude=${routeLons}&hourly=wave_height,wave_direction,ocean_current_velocity,ocean_current_direction&timeformat=iso8601&forecast_days=7`),
+          fetchJson(`https://api.open-meteo.com/v1/forecast?latitude=${gridLats}&longitude=${gridLons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=iso8601&forecast_days=7`),
+          fetchJson(`https://marine-api.open-meteo.com/v1/marine?latitude=${gridLats}&longitude=${gridLons}&hourly=ocean_current_velocity,ocean_current_direction&timeformat=iso8601&forecast_days=7`)
         ]);
 
-        weatherData = asArray(await weatherRes.json());
-        marineData = asArray(await marineRes.json());
-        gridWeatherData = asArray(await gridWeatherRes.json());
-        gridMarineData = asArray(await gridMarineRes.json());
+        if (weatherRes.status === 'rejected') throw weatherRes.reason;
+        if (gridWeatherRes.status === 'rejected') throw gridWeatherRes.reason;
 
-        localStorage.setItem('offlineWeatherData', JSON.stringify({ weatherData, marineData, gridWeatherData, gridMarineData, gridBounds, sampleRoutePointsData, savedAt: new Date().toISOString() }));
+        const newWeather = asArray(weatherRes.value);
+        const newGridWeather = asArray(gridWeatherRes.value);
+        if (!validLocations(newWeather, sampleRoutePointsData.length) || !validLocations(newGridWeather, gridPoints.length)) {
+          throw new Error('Säärajapinta palautti odottamattoman vastauksen');
+        }
+
+        let newMarine = marineRes.status === 'fulfilled' ? asArray(marineRes.value) : null;
+        let newGridMarine = gridMarineRes.status === 'fulfilled' ? asArray(gridMarineRes.value) : null;
+        const marineMissing = !validLocations(newMarine, sampleRoutePointsData.length);
+        if (marineMissing) newMarine = emptyMarine(sampleRoutePointsData.length);
+        if (!validLocations(newGridMarine, gridPoints.length)) newGridMarine = emptyMarine(gridPoints.length);
+
+        // Kaikki ennen sijoitusta: epäonnistunut haku ei jätä muistiin sekalaista dataa.
+        weatherData = newWeather;
+        marineData = newMarine;
+        gridWeatherData = newGridWeather;
+        gridMarineData = newGridMarine;
+        dataFetchedAt = new Date().toISOString();
+
+        // localStorage voi täyttyä: onnistunut haku ei saa näyttää virheeltä, jos vain offline-tallennus epäonnistuu.
+        let storageNote = '';
+        const payload = { weatherData, marineData, gridWeatherData, gridMarineData, gridBounds, sampleRoutePointsData, savedAt: dataFetchedAt };
+        try {
+          localStorage.setItem('offlineWeatherData', JSON.stringify(payload));
+        } catch (storageError) {
+          try {
+            localStorage.setItem('offlineWeatherData', JSON.stringify({ ...payload, gridWeatherData: [], gridMarineData: [], gridBounds: null }));
+            storageNote = ' Offline-tallennuksessa ei ollut tilaa tuuli/virta-animaatioille.';
+          } catch (storageError2) {
+            localStorage.removeItem('offlineWeatherData');
+            storageNote = ' Offline-tallennus epäonnistui (tila täynnä).';
+          }
+        }
+
         document.getElementById('routeSlider').disabled = false;
         document.getElementById('routeSlider').value = 0;
         document.getElementById('btnFindBestTime').disabled = false;
-        setBanner('Sää- ja virtaustiedot ladattu.');
+        setBanner(marineMissing
+          ? `Säätiedot ladattu. Aalto- ja virtatietoja ei saatu tälle alueelle.${storageNote}`
+          : `Sää- ja virtaustiedot ladattu.${storageNote}`);
         lastRenderedTimeIdx = -1;
         updateSimulation(0);
         drawColoredRoute();
@@ -1010,8 +1104,39 @@
         }
       } catch (error) {
         console.error('Säädata virhe:', error);
-        setBanner('Verkkovirhe: tarkista yhteys.');
+        const reason = navigator.onLine === false
+          ? 'ei verkkoyhteyttä'
+          : error.status === 429 ? 'säärajapinnan käyttöraja ylittyi, yritä myöhemmin uudelleen' : (error.message || 'tuntematon virhe');
+        setBanner(hadData
+          ? `Sään haku epäonnistui (${reason}). Käytössä tallennettu data, haettu ${dataFetchedAt ? formatAge(dataFetchedAt) : 'aiemmin'}.`
+          : `Sään haku epäonnistui (${reason}).`);
       }
+    }
+
+    // fetch + tilakoodin ja Open-Meteon virhevastauksen ({ error: true, reason }) tarkistus.
+    // Yksi uusintayritys verkkovirheisiin ja 5xx-vastauksiin; 4xx (esim. 429) ei uusita.
+    async function fetchJson(url, retries = 1) {
+      let lastError;
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const res = await fetch(url);
+          let body = null;
+          try { body = await res.json(); } catch (parseError) { /* ei JSON-runkoa */ }
+          if (!res.ok || (body && !Array.isArray(body) && body.error)) {
+            const err = new Error((body && body.reason) || `HTTP ${res.status}`);
+            err.status = res.status;
+            throw err;
+          }
+          if (body === null) throw new Error('Tyhjä vastaus');
+          return body;
+        } catch (error) {
+          lastError = error;
+          const retryable = !error.status || error.status >= 500;
+          if (!retryable || attempt === retries) break;
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
+      throw lastError;
     }
 
     function updateSimulation(progress) {
@@ -1025,32 +1150,46 @@
         boatMarker.setLatLng([cond.pos.lat, cond.pos.lng]);
       }
 
-      if (weatherData.length === 0 || marineData.length === 0 || !cond.diffs) return;
+      if (weatherData.length === 0 || marineData.length === 0) return;
 
       const routeGeom = getExactRouteGeometry();
-      const windKnots = (cond.windSpeed * 1.94384).toFixed(1);
-      const sailPoint = relWindText(cond.relAngle);
-
       document.getElementById('timeVal').textContent = cond.curDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       document.getElementById('distVal').textContent = `${cond.currentDist.toFixed(1)} / ${routeGeom.totalDist.toFixed(1)} NM`;
-      document.getElementById('windSpeedVal').textContent = `${cond.windSpeed.toFixed(1)} m/s (${windKnots} kn)`;
-      document.getElementById('gustVal').textContent = `Puuska: ${cond.gustSpeed.toFixed(1)} m/s`;
-      document.getElementById('windDirVal').textContent = `${Math.round(cond.windDir)}°`;
-      document.getElementById('relWindVal').textContent = `${cond.relAngle}° (${sailPoint})`;
-      document.getElementById('windArrow').style.transform = `rotate(${cond.windDir + 180}deg)`;
 
-      document.getElementById('waveHeightVal').textContent = `${cond.waveHeight.toFixed(1)} m`;
-      document.getElementById('waveDirVal').textContent = `${Math.round(cond.waveDir)}°`;
-      document.getElementById('waveArrow').style.transform = `rotate(${cond.waveDir + 180}deg)`;
+      if (!cond.diffs) {
+        // Ennuste ei kata hetkeä tai kohdan data puuttuu: ei näytetä vanhoja tai keksittyjä arvoja.
+        resetWeatherDisplay();
+        document.getElementById('timeVal').textContent = cond.curDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('distVal').textContent = `${cond.currentDist.toFixed(1)} / ${routeGeom.totalDist.toFixed(1)} NM`;
+        setBanner(cond.outOfForecast
+          ? `Ennuste ei kata tätä ajankohtaa. Ennuste: ${forecastRangeText()}. Muuta lähtöaikaa tai päivitä säätiedot.`
+          : 'Tälle reitin kohdalle ei ole säädataa.');
+        return;
+      }
 
-      document.getElementById('currentSpeedVal').textContent = `${cond.currentKnots.toFixed(1)} kn`;
-      document.getElementById('currentDirVal').textContent = `${Math.round(cond.currentDir)}°`;
-      document.getElementById('currentArrow').style.transform = `rotate(${cond.currentDir + 180}deg)`;
+      const sailPoint = relWindText(cond.relAngle);
+      const windKnots = cond.windSpeed === null ? null : cond.windSpeed * 1.94384;
+      const setText = (id, text) => { document.getElementById(id).textContent = text; };
+      const setArrow = (id, dir) => { document.getElementById(id).style.transform = `rotate(${dir === null ? 0 : dir + 180}deg)`; };
 
-      document.getElementById('tempVal').textContent = `${cond.tempC.toFixed(1)} °C`;
-      let currentText = getWeatherDescription(cond.weatherCode);
-      if (cond.rain > 0) currentText += ` (${cond.rain.toFixed(1)} mm)`;
-      document.getElementById('weatherDescVal').textContent = currentText;
+      setText('windSpeedVal', cond.windSpeed === null ? '--' : `${cond.windSpeed.toFixed(1)} m/s (${windKnots.toFixed(1)} kn)`);
+      setText('gustVal', `Puuska: ${cond.gustSpeed === null ? '--' : `${cond.gustSpeed.toFixed(1)} m/s`}`);
+      setText('windDirVal', cond.windDir === null ? '--°' : `${Math.round(cond.windDir)}°`);
+      setText('relWindVal', cond.relAngle === null ? '--' : `${cond.relAngle}° (${sailPoint})`);
+      setArrow('windArrow', cond.windDir);
+
+      setText('waveHeightVal', `${fmtNum(cond.waveHeight)} m`);
+      setText('waveDirVal', cond.waveDir === null ? '--°' : `${Math.round(cond.waveDir)}°`);
+      setArrow('waveArrow', cond.waveDir);
+
+      setText('currentSpeedVal', `${fmtNum(cond.currentKnots)} kn`);
+      setText('currentDirVal', cond.currentDir === null ? '--°' : `${Math.round(cond.currentDir)}°`);
+      setArrow('currentArrow', cond.currentDir);
+
+      setText('tempVal', `${fmtNum(cond.tempC)} °C`);
+      let currentText = cond.weatherCode === null ? '--' : getWeatherDescription(cond.weatherCode);
+      if (cond.rain !== null && cond.rain > 0) currentText += ` (${cond.rain.toFixed(1)} mm)`;
+      setText('weatherDescVal', currentText);
 
       applyMetricColors('total', cond.diffs.total);
       applyMetricColors('wind', cond.diffs.wind);
@@ -1287,9 +1426,11 @@
         gridMarineData = cached.gridMarineData || [];
         gridBounds = cached.gridBounds || null;
         sampleRoutePointsData = cached.sampleRoutePointsData || [];
+        dataFetchedAt = cached.savedAt || null;
         document.getElementById('routeSlider').disabled = false;
         document.getElementById('btnFindBestTime').disabled = false;
-        setBanner('Tallennettu säädata ladattu.');
+        const ageMs = dataFetchedAt ? Date.now() - new Date(dataFetchedAt).getTime() : Infinity;
+        setBanner(`Tallennettu säädata ladattu (haettu ${dataFetchedAt ? formatAge(dataFetchedAt) : 'tuntematon aika sitten'}).${ageMs > 6 * 3600 * 1000 ? ' Data on vanhaa: päivitä Hae sää -painikkeella kun verkko on käytettävissä.' : ''}`);
         updateSimulation(0);
         drawColoredRoute();
       }

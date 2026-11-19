@@ -19,3 +19,13 @@
 - [x] Vuorokaudenajan valinta "Ehdota paras lähtöaika" -hakuun (Mikä tahansa/Aamuyö/Aamupäivä/
       Iltapäivä/Ilta), Käännä-nappi siirtää veneen heti reitin uuteen alkuun, ja Hae sää -painike
       sulkee asetuspaneelin automaattisesti onnistuneen haun jälkeen
+- [x] PWA/offline kuntoon: oma `sw.js` (blob:-URL-rekisteröinti ei toiminut), `manifest.json` ja kuvakkeet.
+      Sovelluskuori network-first (uusi julkaisu tulee heti käyttöön), CDN-kirjastot cache-first,
+      karttalaatat stale-while-revalidate (max 600 kpl). Säädata luetaan käynnistyksessä localStoragesta
+      ja sen ikä näytetään.
+- [x] Puuttuvan datan käsittely: puuttuva arvo ei enää muutu nollaksi eikä "hyväksi säksi" (`null` →
+      "--", neutraali väri, harmaa katkoviiva reitillä), kokonaisarvosana lasketaan vain saatavilla
+      olevista tekijöistä, ja ennusteen ulkopuolinen ajankohta ei enää näytä tunnin 0 dataa.
+      Haku: `res.ok`-tarkistus, Open-Meteon virheviestit, yksi uusintayritys 5xx/verkkovirheessä,
+      meridata valinnainen, atomaarinen sijoitus ja localStorage-täyttymisen käsittely.
+- [ ] Tarkista oikealla laitteella: PWA:n asennus kotinäytölle ja offline-käynnistys (iOS Safari + Android Chrome)
