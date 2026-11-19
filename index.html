@@ -183,6 +183,7 @@
     <div class="map-floating-controls">
       <button class="map-btn" id="btnMenu" title="Reitit ja info">⋮</button>
       <button class="map-btn" id="btnGps" title="GPS-seuranta">📍</button>
+      <button class="map-btn" id="btnReverseMap" title="Käännä reitin suunta" aria-label="Käännä reitin suunta" disabled>⇅</button>
       <button class="map-btn" id="btnChart" title="Ennustekaavio (tuuli, puuska, aallokko)" aria-label="Ennustekaavio" disabled>📈</button>
     </div>
 
@@ -531,6 +532,7 @@
       document.getElementById('routeSlider').value = 0;
       document.getElementById('btnFindBestTime').disabled = true;
       document.getElementById('btnChart').disabled = true;
+      ['btnFetch', 'btnReverse', 'btnReverseMap'].forEach(id => { document.getElementById(id).disabled = true; });
       document.getElementById('bestTimeResult').textContent = '';
       document.getElementById('bestTimeOptions').textContent = '';
       if (removeCurrentSave) localStorage.removeItem('sailingRouteData');
@@ -713,10 +715,12 @@
       if (waypoints.length < 2) {
         btnFetch.disabled = true;
         btnReverse.disabled = true;
+        document.getElementById('btnReverseMap').disabled = true;
         setBanner('Klikkaa karttaa lisätäksesi reittipisteitä.');
       } else {
         btnFetch.disabled = false;
         btnReverse.disabled = false;
+        document.getElementById('btnReverseMap').disabled = false;
         setBanner(`Reitti: ${waypoints.length} pistettä (${geom.totalDist.toFixed(1)} NM)`);
       }
 
@@ -1404,12 +1408,31 @@
       if (waypoints.length < 2) return;
       waypoints.reverse();
       segmentSpeeds.reverse();
+      // Säädata on reittijärjestyksessä (näytepiste 0 = reitin alku): käännetään mukana, muuten
+      // veneen kohdalle näytettäisiin vanhan reitin toisen pään sää. Hila (tuuli/virta-animaatio) ei riipu suunnasta.
+      weatherData.reverse();
+      marineData.reverse();
+      sampleRoutePointsData.reverse();
+      try {
+        const cached = JSON.parse(localStorage.getItem('offlineWeatherData') || 'null');
+        if (cached?.weatherData && cached?.marineData) {
+          cached.weatherData.reverse();
+          cached.marineData.reverse();
+          if (Array.isArray(cached.sampleRoutePointsData)) cached.sampleRoutePointsData.reverse();
+          localStorage.setItem('offlineWeatherData', JSON.stringify(cached));
+        }
+      } catch (error) { /* välimuistin päivitys ei onnistunut: data haetaan uudelleen tarvittaessa */ }
       updateRouteAndSave();
       document.getElementById('routeSlider').value = 0;
       lastRenderedTimeIdx = -1;
       updateSimulation(0);
+      drawColoredRoute();
+      document.getElementById('bestTimeResult').textContent = '';
+      document.getElementById('bestTimeOptions').textContent = '';
+      setBanner('Reitti käännetty: lähtö on nyt entinen määränpää.');
     });
 
+    document.getElementById('btnReverseMap').addEventListener('click', () => document.getElementById('btnReverse').click());
     document.getElementById('btnClear').addEventListener('click', () => clearRouteState(true));
 
     document.getElementById('speed').addEventListener('input', () => {

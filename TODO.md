@@ -40,3 +40,8 @@
 - [x] "Ehdota paras lähtöaika" näyttää top 3 -vaihtoehdon (väh. 6 h välein, syyt: tuuli-, puuska- ja
       aaltoväli, rajojen tila); valinta asettaa lähtöajan.
 - [ ] Tarkista kaavion luettavuus oikealla puhelimella (iPhone SE -kokoinen näyttö, aurinko)
+- [x] Käännä-painike myös kartalla (⇅), koska asetuspaneeli sulkeutuu haun jälkeen. Korjattu: käännös
+      kääntää nyt myös ladatun säädatan ja offline-välimuistin (aiemmin veneen kohdalle näytettiin
+      vanhan reitin toisen pään sää). Tyhjennys poistaa Hae sää/Käännä-painikkeet käytöstä.
+- [ ] Suomalaiset (FMI) ja ruotsalaiset (SMHI) säälähteet: odottaa verkkoyhteyttä kehitysympäristöstä
+      rajapintojen testaamiseksi (ks. keskustelu)
