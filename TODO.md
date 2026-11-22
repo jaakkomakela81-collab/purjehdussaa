@@ -43,8 +43,14 @@
 - [x] Käännä-painike myös kartalla (⇅), koska asetuspaneeli sulkeutuu haun jälkeen. Korjattu: käännös
       kääntää nyt myös ladatun säädatan ja offline-välimuistin (aiemmin veneen kohdalle näytettiin
       vanhan reitin toisen pään sää). Tyhjennys poistaa Hae sää/Käännä-painikkeet käytöstä.
-- [ ] Suomalaiset (FMI) ja ruotsalaiset (SMHI) säälähteet: odottaa verkkoyhteyttä kehitysympäristöstä
-      rajapintojen testaamiseksi (ks. keskustelu)
+- [x] Suomalaiset (FMI) ja ruotsalaiset (SMHI) säälähteet: "Sääennusteen lähde" -valinta (tallentuu laitteelle,
+      vaihto hakee uudelleen). FMI: meteorologin editoima ennuste (opendata.fmi.fi WFS, multipointcoverage,
+      tuuli/HourlyMaximumGust/lämpö/sade/WeatherSymbol3, ~9 vrk) + aallokko WAM-mallista (~2,5 vrk).
+      SMHI: snow1g-pisteennuste (tunneittain ~2,5 vrk, sitten 6 h välein -> välitunnit interpoloidaan).
+      Data sovitetaan Open-Meteon tuntiakselille; kattamattomat tunnit/pisteet jäävät Open-Meteolle ja
+      ilmoitus kertoo mihin asti valittu lähde kattaa. FMI hylkää koko koontikyselyn, jos yksi piste on
+      alueen ulkopuolella -> silloin haetaan piste kerrallaan. Jos Open-Meteo ei vastaa (esim. 429-käyttöraja),
+      FMI/SMHI toimii yksinään (tuuli/virta-animaatio pois). Testattu oikeilla FMI/SMHI-rajapinnoilla.
 
 ## Seuraavaksi (kirjattu 22.11.2026)
 
