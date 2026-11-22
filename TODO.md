@@ -59,20 +59,17 @@ Huom. verkollinen istunto: sallittuihin verkkotunnuksiin tarvitaan `opendata.fmi
 varten `data.orc.org` (tai laajempi verkkotaso).
 
 ### FMI/SMHI-haaran yhdistäminen
-- [ ] Yhdistä haara `claude/confident-maxwell-99mhln` (commit ec354e1: Sääennusteen lähde -valinta,
-      FMI + SMHI + Open-Meteo-varakäyttö) `main`iin. Haara ei ole vielä `main`issa eli julkaistussa
-      sovelluksessa (yllä oleva FMI/SMHI-rivi on tämän haaran puolella vielä "odottaa"-tilassa).
-      Yhdistäminen aiheuttaa pienen ristiriidan TODO.md:n lopussa: ota molemmat puolet.
-      Tarkistettu 22.11.: kaikki 60 aiempaa testiä menevät läpi sen koodilla + 13 mock-testiä (SMHI-arvot,
-      interpolointi, kattavuuden jälkeen Open-Meteo, 429 → SMHI yksin, SMHI 500 → varakäyttö, FMI 400 →
-      varakäyttö) → 73/73.
-- [ ] Testaa FMI ja SMHI oikeilla rajapinnoilla verkollisessa istunnossa. Erityisesti FMI:n onnistuneen
-      vastauksen XML-jäsennys (multipointcoverage) ei ole mock-testattu. Vertaa arvoja Open-Meteoon
-      oikealla reitillä ja tarkista SMHI:n kattavuus Suomenlahdella.
-- [ ] Korjaa: lähdeilmoitus (`weatherSourceNote`) katkeaa kapeassa ilmoituspalkissa (nowrap + ellipsis,
-      max-width 80vw) → näytä lähde ja kattavuus pysyvästi, esim. kaavion otsikossa ja datan iän vieressä
-      (todennäköinen ongelma puhelimella, tarkista oikealla laitteella).
-- [ ] Korjaa: `clearRouteState` ei nollaa `weatherSourceNote`a (vanha teksti voi jäädä näkyviin).
+- [x] Yhdistä haara `claude/confident-maxwell-99mhln` (ec354e1, FMI + SMHI + Open-Meteo-varakäyttö).
+      Yhdistetty 22.11. kehityshaaraan; `main`iin vienti (julkaisu) vielä tekemättä.
+- [x] Testattu 22.11. oikeilla rajapinnoilla sovelluksen omilla funktioilla ja koko Hae sää -polulla
+      (Helsinki–Porkkala, Maarianhamina–Sandhamn). FMI:n multipointcoverage-jäsennys toimii (193 h, ~8 vrk),
+      WAM-aallot ~2,5 vrk (alkaa muutaman tunnin viiveellä, sitä ennen Open-Meteo; Sandhamn/maa-alueet jäävät Open-Meteolle),
+      SMHI kattaa koko Suomenlahden (Kotkan edusta mukaan lukien, ~10 vrk). Tuulen suunnat yhtenevät
+      kaikissa lähteissä (±5°); nopeuksissa normaalia mallihajontaa (SMHI tyypillisesti 1–2 m/s kovempi).
+      Open-Meteon 429-käyttöraja tuli testissä vastaan: FMI toimi silloin yksinään oikein.
+- [x] Lähdeilmoitus ei enää katkea: ilmoituspalkki rivittyy (max 4 riviä) zoom- ja karttapainikkeiden väliin,
+      ja lähde + datan ikä näkyvät pysyvästi ennustekaavion alaotsikossa.
+- [x] `clearRouteState` nollaa nyt `weatherSourceNote`n.
 - [ ] Harkitse "Pahin lähteistä" -yhdistelmää turvarajoihin: SMHI:n 6 h askeleiden interpolointi tasoittaa
       huippuja ja voi aliarvioida puuskia.
 
