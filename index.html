@@ -303,6 +303,15 @@
         <div class="hint-text" id="bestTimeResult"></div>
         <div class="best-options" id="bestTimeOptions"></div>
 
+        <div class="field" title="Reitin sää (tuuli, puuska, lämpötila, sade). Tuuli/virta-animaatio ja merivirrat tulevat aina Open-Meteosta.">
+          <label for="weatherSource">Sääennusteen lähde</label>
+          <select id="weatherSource">
+            <option value="openmeteo">Open-Meteo (oletus)</option>
+            <option value="fmi">FMI – Ilmatieteen laitos (+ aallot WAM)</option>
+            <option value="smhi">SMHI – Ruotsin ilmatieteen laitos</option>
+          </select>
+        </div>
+
         <div class="btn-group">
           <button class="action-btn btn-danger" id="btnClear">Tyhjennä</button>
           <button class="action-btn btn-secondary" id="btnReverse" disabled>Käännä</button>
@@ -364,7 +373,7 @@
         </div>
         <div class="info-item">
           <span class="info-label">Lähteet</span>
-          <span class="info-val">Kartta: OpenStreetMap ja OpenSeaMap. Sää ja tuuli: Open-Meteo Forecast API. Meridata: Open-Meteo Marine API. Sadetutka: RainViewer. Animaatio: Leaflet Velocity.</span>
+          <span class="info-val">Kartta: OpenStreetMap ja OpenSeaMap. Sää ja tuuli: Open-Meteo Forecast API, valittaessa reitin sää Ilmatieteen laitoksen avoimesta datasta (FMI, meteorologin editoima ennuste, CC BY 4.0) tai SMHI:n avoimesta datasta (SMHI, CC BY 4.0). Meridata: Open-Meteo Marine API; FMI-valinnalla aallokko FMI:n WAM-mallista n. 2,5 vrk eteenpäin. Kun valitun lähteen ennuste ei kata tuntia tai pistettä, käytetään Open-Meteota ja siitä kerrotaan ilmoituksessa. Tuuli/virta-animaatio on aina Open-Meteosta. Sadetutka: RainViewer. Animaatio: Leaflet Velocity.</span>
         </div>
       </div>
       <button class="btn-modal-close" id="btnCloseModalBtn">Sulje</button>
@@ -1242,6 +1251,10 @@
       const validLocations = (data, n) => Array.isArray(data) && data.length === n && data.every(d => Array.isArray(d?.hourly?.time));
       const hadData = weatherData.length > 0;
 
+      const source = readWeatherSource();
+      // Alueellinen haku rinnakkain Open-Meteon kanssa; ei koskaan hylkäydy (virheet kirjataan tulokseen).
+      const regionalPromise = fetchRegionalSource(source, sampleRoutePointsData);
+
       try {
         const [weatherRes, marineRes, gridWeatherRes, gridMarineRes] = await Promise.allSettled([
           fetchJson(`https://api.open-meteo.com/v1/forecast?latitude=${routeLats}&longitude=${routeLons}&hourly=temperature_2m,weather_code,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timeformat=iso8601&forecast_days=7`),
@@ -1250,31 +1263,54 @@
           fetchJson(`https://marine-api.open-meteo.com/v1/marine?latitude=${gridLats}&longitude=${gridLons}&hourly=ocean_current_velocity,ocean_current_direction&timeformat=iso8601&forecast_days=7`)
         ]);
 
-        if (weatherRes.status === 'rejected') throw weatherRes.reason;
-        if (gridWeatherRes.status === 'rejected') throw gridWeatherRes.reason;
-
-        const newWeather = asArray(weatherRes.value);
-        const newGridWeather = asArray(gridWeatherRes.value);
-        if (!validLocations(newWeather, sampleRoutePointsData.length) || !validLocations(newGridWeather, gridPoints.length)) {
-          throw new Error('Säärajapinta palautti odottamattoman vastauksen');
+        const regional = await regionalPromise;
+        const n = sampleRoutePointsData.length;
+        // FMI/SMHI-valinnalla Open-Meteo ei ole pakollinen: sen puuttuessa (esim. käyttöraja 429) reitin sää
+        // rakennetaan pelkästä valitusta lähteestä ja tuuli/virta-animaatio jätetään pois.
+        let newWeather = weatherRes.status === 'fulfilled' ? asArray(weatherRes.value) : null;
+        let openMeteoWeatherError = null;
+        if (!validLocations(newWeather, n)) {
+          openMeteoWeatherError = weatherRes.status === 'rejected' ? weatherRes.reason : new Error('Säärajapinta palautti odottamattoman vastauksen');
+          if (source === 'openmeteo') throw openMeteoWeatherError;
+          newWeather = emptyWeatherSkeleton(n);
+        }
+        let newGridWeather = gridWeatherRes.status === 'fulfilled' ? asArray(gridWeatherRes.value) : null;
+        let newGridBounds = gridBounds;
+        if (!validLocations(newGridWeather, gridPoints.length)) {
+          if (source === 'openmeteo') throw gridWeatherRes.status === 'rejected' ? gridWeatherRes.reason : new Error('Säärajapinta palautti odottamattoman vastauksen');
+          newGridWeather = [];
+          newGridBounds = null;
         }
 
         let newMarine = marineRes.status === 'fulfilled' ? asArray(marineRes.value) : null;
         let newGridMarine = gridMarineRes.status === 'fulfilled' ? asArray(gridMarineRes.value) : null;
-        const marineMissing = !validLocations(newMarine, sampleRoutePointsData.length);
+        let marineMissing = !validLocations(newMarine, sampleRoutePointsData.length);
         if (marineMissing) newMarine = emptyMarine(sampleRoutePointsData.length);
         if (!validLocations(newGridMarine, gridPoints.length)) newGridMarine = emptyMarine(gridPoints.length);
+
+        // Valittu alueellinen lähde (FMI/SMHI) korvaa reitin sään; sen virhe ei kaada hakua, jos Open-Meteo vastasi.
+        const applied = applyRegionalSource(source, regional, n, newWeather, newMarine, openMeteoWeatherError ? 'ei ennustetta' : 'Open-Meteo');
+        if (openMeteoWeatherError && applied.coveredPoints === 0) throw openMeteoWeatherError;
+        if (openMeteoWeatherError) trimToCoveredHours(newWeather, newMarine);
+        let newSourceNote = applied.note;
+        if (openMeteoWeatherError) {
+          const reason = openMeteoWeatherError.status === 429 ? 'käyttöraja täynnä' : (openMeteoWeatherError.message || 'virhe');
+          newSourceNote += ` Open-Meteo ei vastannut (${reason}): tuuli/virta-animaatio ei käytössä.`;
+        }
+        if (marineMissing && validLocations(newMarine, n)) marineMissing = false;
 
         // Kaikki ennen sijoitusta: epäonnistunut haku ei jätä muistiin sekalaista dataa.
         weatherData = newWeather;
         marineData = newMarine;
         gridWeatherData = newGridWeather;
         gridMarineData = newGridMarine;
+        gridBounds = newGridBounds;
+        weatherSourceNote = newSourceNote;
         dataFetchedAt = new Date().toISOString();
 
         // localStorage voi täyttyä: onnistunut haku ei saa näyttää virheeltä, jos vain offline-tallennus epäonnistuu.
         let storageNote = '';
-        const payload = { weatherData, marineData, gridWeatherData, gridMarineData, gridBounds, sampleRoutePointsData, savedAt: dataFetchedAt };
+        const payload = { weatherData, marineData, gridWeatherData, gridMarineData, gridBounds, sampleRoutePointsData, weatherSourceNote, savedAt: dataFetchedAt };
         try {
           localStorage.setItem('offlineWeatherData', JSON.stringify(payload));
         } catch (storageError) {
@@ -1292,8 +1328,8 @@
         document.getElementById('btnFindBestTime').disabled = false;
         document.getElementById('btnChart').disabled = false;
         setBanner(marineMissing
-          ? `Säätiedot ladattu. Aalto- ja virtatietoja ei saatu tälle alueelle.${storageNote}`
-          : `Sää- ja virtaustiedot ladattu.${storageNote}`);
+          ? `Säätiedot ladattu. Aalto- ja virtatietoja ei saatu tälle alueelle. ${weatherSourceNote}${storageNote}`
+          : `Sää- ja virtaustiedot ladattu. ${weatherSourceNote}${storageNote}`);
         lastRenderedTimeIdx = -1;
         updateSimulation(0);
         drawColoredRoute();
@@ -1337,6 +1373,295 @@
         }
       }
       throw lastError;
+    }
+
+    // ---- Alueelliset säälähteet (FMI, SMHI) ----
+    // Molemmat sovitetaan Open-Meteon tuntiakselille (UTC, "YYYY-MM-DDTHH:00"), jotta kaavio, paras lähtöaika
+    // ja reitin värit toimivat sellaisenaan. Tunti, jota valittu lähde ei kata, jää Open-Meteon arvoksi.
+    const WEATHER_SOURCE_KEY = 'sailingWeatherSource';
+    const WEATHER_SOURCE_LABELS = { openmeteo: 'Open-Meteo', fmi: 'FMI', smhi: 'SMHI' };
+    let weatherSourceNote = '';
+
+    function readWeatherSource() {
+      const value = document.getElementById('weatherSource').value;
+      return WEATHER_SOURCE_LABELS[value] ? value : 'openmeteo';
+    }
+
+    const hourKey = date => date.toISOString().slice(0, 13);
+
+    async function fetchText(url, retries = 1) {
+      let lastError;
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const res = await fetch(url);
+          const body = await res.text();
+          if (!res.ok) {
+            // FMI palauttaa virheen XML:nä (ExceptionText), esim. "No data available" alueen ulkopuolella.
+            const reason = body.match(/<ExceptionText>([^<]*)/)?.[1]?.replace(/&apos;/g, "'");
+            const err = new Error(reason || `HTTP ${res.status}`);
+            err.status = res.status;
+            throw err;
+          }
+          return body;
+        } catch (error) {
+          lastError = error;
+          const retryable = !error.status || error.status >= 500;
+          if (!retryable || attempt === retries) break;
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
+      throw lastError;
+    }
+
+    // FMI WFS multipointcoverage -> [{ lat, lng, rows: Map(hourKey -> { param: value }) }].
+    // Paikat eivät tule pyyntöjärjestyksessä, joten ne kohdistetaan koordinaateilla.
+    function parseFmiMultipoint(xml) {
+      const fields = [...xml.matchAll(/<swe:field name="([^"]+)"/g)].map(m => m[1]);
+      const positions = (xml.match(/<gmlcov:positions>([\s\S]*?)<\/gmlcov:positions>/)?.[1] || '').trim().split(/\s+/).filter(Boolean);
+      const values = (xml.match(/<gml:doubleOrNilReasonTupleList>([\s\S]*?)<\/gml:doubleOrNilReasonTupleList>/)?.[1] || '').trim().split(/\s+/).filter(Boolean);
+      const byLoc = new Map();
+      const rowCount = Math.floor(positions.length / 3);
+      if (fields.length === 0 || values.length < rowCount * fields.length) return [];
+      for (let r = 0; r < rowCount; r++) {
+        const lat = Number(positions[r * 3]);
+        const lng = Number(positions[r * 3 + 1]);
+        const epoch = Number(positions[r * 3 + 2]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(epoch)) continue;
+        const locKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+        if (!byLoc.has(locKey)) byLoc.set(locKey, { lat, lng, rows: new Map() });
+        const row = {};
+        fields.forEach((f, k) => { row[f] = toNum(values[r * fields.length + k]); });
+        byLoc.get(locKey).rows.set(hourKey(new Date(epoch * 1000)), row);
+      }
+      return [...byLoc.values()];
+    }
+
+    // Kohdistaa jäsennetyt paikat reitin näytepisteisiin (lähin alle ~0,01°).
+    function assignToPoints(locations, points, target) {
+      locations.forEach(loc => {
+        let best = -1;
+        let bestD = 0.01;
+        points.forEach((pt, i) => {
+          const d = Math.max(Math.abs(pt.lat - loc.lat), Math.abs(pt.lng - loc.lng));
+          if (d < bestD) { bestD = d; best = i; }
+        });
+        if (best !== -1) target[best] = loc.rows;
+      });
+    }
+
+    // Yksi koontikysely; jos jokin piste on mallin alueen ulkopuolella, FMI hylkää koko pyynnön (400),
+    // jolloin haetaan piste kerrallaan ja alueen ulkopuoliset jäävät Open-Meteolle.
+    async function fetchFmiQuery(storedQuery, parameters, points) {
+      // Alku kuluvan tunnin alusta (oletuksena FMI alkaa vasta seuraavasta tunnista), loppu 8 vrk päähän.
+      const start = new Date();
+      start.setUTCMinutes(0, 0, 0);
+      const end = new Date(start.getTime() + 8 * 24 * 3600 * 1000);
+      const iso = d => d.toISOString().replace('.000', '');
+      const base = `https://opendata.fmi.fi/wfs?service=WFS&version=2.0.0&request=getFeature&storedquery_id=${storedQuery}`
+        + `&parameters=${parameters}&timestep=60&starttime=${iso(start)}&endtime=${iso(end)}`;
+      const latlon = pts => pts.map(pt => `&latlon=${pt.lat.toFixed(4)},${pt.lng.toFixed(4)}`).join('');
+      const result = new Array(points.length).fill(null);
+      try {
+        assignToPoints(parseFmiMultipoint(await fetchText(base + latlon(points))), points, result);
+      } catch (error) {
+        if (error.status !== 400) throw error;
+        const single = await Promise.allSettled(points.map(pt => fetchText(base + latlon([pt]), 0)));
+        single.forEach(res => {
+          if (res.status === 'fulfilled') assignToPoints(parseFmiMultipoint(res.value), points, result);
+        });
+      }
+      return result;
+    }
+
+    // FMI WeatherSymbol3 -> WMO-koodi (sovelluksen getWeatherDescription ja vaikeusarvio käyttävät WMO:ta).
+    function fmiSymbolToWmo(sym) {
+      if (sym === null) return null;
+      const map = { 1: 0, 2: 2, 3: 3, 21: 80, 22: 81, 23: 82, 31: 61, 32: 63, 33: 65, 41: 85, 42: 85, 43: 86,
+        51: 71, 52: 73, 53: 75, 61: 95, 62: 95, 63: 95, 64: 99, 71: 80, 72: 81, 73: 82, 81: 61, 82: 63, 83: 65, 91: 45, 92: 45 };
+      return map[Math.round(sym)] ?? null;
+    }
+
+    // SMHI snow1g symbol_code (1–27) -> WMO-koodi.
+    function smhiSymbolToWmo(sym) {
+      if (sym === null) return null;
+      const map = [null, 0, 1, 2, 2, 3, 3, 45, 80, 81, 82, 95, 80, 81, 82, 85, 85, 86, 61, 63, 65, 95, 61, 63, 65, 71, 73, 75];
+      return map[Math.round(sym)] ?? null;
+    }
+
+    async function fetchFmiWeather(points) {
+      const rows = await fetchFmiQuery('fmi::forecast::edited::weather::scandinavia::point::multipointcoverage',
+        'Temperature,WindSpeedMS,WindDirection,HourlyMaximumGust,Precipitation1h,WeatherSymbol3', points);
+      return rows.map(r => r && new Map([...r].map(([k, v]) => [k, {
+        temperature_2m: v.Temperature, wind_speed_10m: v.WindSpeedMS, wind_direction_10m: v.WindDirection,
+        wind_gusts_10m: v.HourlyMaximumGust, precipitation: v.Precipitation1h, weather_code: fmiSymbolToWmo(v.WeatherSymbol3)
+      }]).filter(([, v]) => v.wind_speed_10m !== null)));
+    }
+
+    async function fetchFmiWaves(points) {
+      const rows = await fetchFmiQuery('fmi::forecast::wam::point::multipointcoverage', 'SigWaveHeight,WaveDirection', points);
+      // Maa-/järvipisteissä WAM antaa pelkkää NaN:ia: ne jäävät Open-Meteolle.
+      return rows.map(r => r && new Map([...r].map(([k, v]) => [k, { wave_height: v.SigWaveHeight, wave_direction: v.WaveDirection }])
+        .filter(([, v]) => v.wave_height !== null)));
+    }
+
+    const lerp = (a, b, f) => (a === null || b === null ? (f < 0.5 ? a : b) : a + (b - a) * f);
+    const lerpDir = (a, b, f) => {
+      if (a === null || b === null) return f < 0.5 ? a : b;
+      const d = ((b - a + 540) % 360) - 180;
+      return (a + d * f + 360) % 360;
+    };
+
+    // SMHI: tunneittain n. 2,5 vrk, sitten 6 h välein -> välitunnit interpoloidaan
+    // (suunnat lyhintä kaarta, sade = jakson keskiarvo, sääsymboli jakson loppuhetken mukaan).
+    function parseSmhiPoint(json) {
+      const clean = (v, min = -50) => { const n = toNum(v); return n === null || n < min || n >= 9999 ? null : n; };
+      const steps = (json?.timeSeries || []).map(s => {
+        const d = s.data || {};
+        return {
+          t: new Date(s.time),
+          temperature_2m: clean(d.air_temperature, -90),
+          wind_speed_10m: clean(d.wind_speed, 0),
+          wind_direction_10m: clean(d.wind_from_direction, 0),
+          wind_gusts_10m: clean(d.wind_speed_of_gust, 0),
+          precipitation: clean(d.precipitation_amount_mean, 0),
+          weather_code: smhiSymbolToWmo(clean(d.symbol_code, 1))
+        };
+      }).filter(s => Number.isFinite(s.t.getTime()) && s.wind_speed_10m !== null).sort((a, b) => a.t - b.t);
+      const rows = new Map();
+      // Ensimmäinen ennustehetki on seuraava tasatunti: sama arvo kuluvalle tunnille, ettei nykyhetki jää ilman dataa.
+      if (steps.length > 0) {
+        const { t, ...first } = steps[0];
+        rows.set(hourKey(new Date(t.getTime() - 3600000)), first);
+      }
+      steps.forEach((s, i) => {
+        const prev = steps[i - 1];
+        const gapH = prev ? Math.round((s.t - prev.t) / 3600000) : 1;
+        for (let h = gapH - 1; h >= 1 && prev; h--) {
+          const f = (gapH - h) / gapH;
+          rows.set(hourKey(new Date(s.t.getTime() - h * 3600000)), {
+            temperature_2m: lerp(prev.temperature_2m, s.temperature_2m, f),
+            wind_speed_10m: lerp(prev.wind_speed_10m, s.wind_speed_10m, f),
+            wind_direction_10m: lerpDir(prev.wind_direction_10m, s.wind_direction_10m, f),
+            wind_gusts_10m: lerp(prev.wind_gusts_10m, s.wind_gusts_10m, f),
+            precipitation: s.precipitation,
+            weather_code: s.weather_code
+          });
+        }
+        const { t, ...values } = s;
+        rows.set(hourKey(t), values);
+      });
+      return rows;
+    }
+
+    async function fetchSmhiWeather(points) {
+      const results = await Promise.allSettled(points.map(pt => fetchJson(
+        `https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/${pt.lng.toFixed(4)}/lat/${pt.lat.toFixed(4)}/data.json`)));
+      if (results.every(r => r.status === 'rejected')) throw results[0].reason;
+      return results.map(r => (r.status === 'fulfilled' ? parseSmhiPoint(r.value) : null));
+    }
+
+    // Kirjoittaa lähteen arvot Open-Meteon tuntiakselille. Palauttaa katetut pisteet ja viimeisen yhteisesti katetun tunnin.
+    function mergeHourly(locations, perPointRows, fields, fallbackTimes) {
+      let coveredPoints = 0;
+      let lastTime = null;
+      locations.forEach((loc, i) => {
+        const rows = perPointRows[i];
+        if (!loc.hourly || !Array.isArray(loc.hourly.time)) loc.hourly = { ...(loc.hourly || {}), time: [...(fallbackTimes[i] || [])] };
+        const times = loc.hourly.time;
+        fields.forEach(f => { if (!Array.isArray(loc.hourly[f])) loc.hourly[f] = new Array(times.length).fill(null); });
+        if (!rows || rows.size === 0) return;
+        let lastIdx = -1;
+        times.forEach((t, idx) => {
+          const row = rows.get(String(t).slice(0, 13));
+          if (!row) return;
+          fields.forEach(f => { if (row[f] !== null && row[f] !== undefined) loc.hourly[f][idx] = row[f]; });
+          lastIdx = idx;
+        });
+        if (lastIdx === -1) return;
+        coveredPoints++;
+        if (lastTime === null || times[lastIdx] < lastTime) lastTime = times[lastIdx];
+        // Puuska ei voi olla keskituulta heikompi (jos puuska jäi toisesta lähteestä).
+        if (loc.hourly.wind_gusts_10m && loc.hourly.wind_speed_10m) {
+          loc.hourly.wind_gusts_10m = loc.hourly.wind_gusts_10m.map((g, idx) => {
+            const w = loc.hourly.wind_speed_10m[idx];
+            return g !== null && w !== null && g < w ? w : g;
+          });
+        }
+      });
+      return { coveredPoints, lastTime };
+    }
+
+    function fmtUntil(time) {
+      if (!time) return '';
+      return new Date(`${time}Z`).toLocaleString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Hakee valitun lähteen reitin sään (ja FMI:llä aallot). Ei hylkäydy: tulos on Promise.allSettled-muotoa.
+    async function fetchRegionalSource(source, points) {
+      if (source === 'openmeteo') return null;
+      const [rows, waves] = await Promise.allSettled([
+        source === 'fmi' ? fetchFmiWeather(points) : fetchSmhiWeather(points),
+        source === 'fmi' ? fetchFmiWaves(points) : Promise.resolve(null)
+      ]);
+      return { rows, waves };
+    }
+
+    // Open-Meteon muotoinen tyhjä runko (tunnit tänään 00 UTC + 8 vrk), kun Open-Meteo ei vastannut.
+    function emptyWeatherSkeleton(n) {
+      const start = new Date();
+      start.setUTCHours(0, 0, 0, 0);
+      const time = Array.from({ length: 8 * 24 }, (_, h) => new Date(start.getTime() + h * 3600000).toISOString().slice(0, 16));
+      return Array.from({ length: n }, () => ({ hourly: { time: [...time] } }));
+    }
+
+    // Ilman Open-Meteota: rajaa tuntiakselin tunteihin, joille jollakin pisteellä on tuulidataa, jotta
+    // kattamaton ajankohta näytetään "ennuste ei kata" -tilana eikä tyhjänä datana.
+    function trimToCoveredHours(weather, marine) {
+      let first = Infinity;
+      let last = -1;
+      weather.forEach(w => (w.hourly.wind_speed_10m || []).forEach((v, i) => {
+        if (v !== null) { first = Math.min(first, i); last = Math.max(last, i); }
+      }));
+      if (last === -1) return;
+      [...weather, ...marine].forEach(loc => {
+        if (!loc?.hourly) return;
+        Object.keys(loc.hourly).forEach(k => {
+          if (Array.isArray(loc.hourly[k])) loc.hourly[k] = loc.hourly[k].slice(first, last + 1);
+        });
+      });
+    }
+
+    // Kirjoittaa haetun lähteen datan reitin taulukoihin (muuttaa niitä). Palauttaa { note, coveredPoints }.
+    function applyRegionalSource(source, fetched, n, weather, marine, fallback = 'Open-Meteo') {
+      if (source === 'openmeteo' || !fetched) return { note: 'Lähde: Open-Meteo.', coveredPoints: n };
+      const label = WEATHER_SOURCE_LABELS[source];
+      const weatherTimes = weather.map(w => w.hourly.time);
+      const notes = [];
+      let coveredPoints = 0;
+      if (fetched.rows.status === 'rejected') {
+        notes.push(`${label}-haku epäonnistui (${fetched.rows.reason?.message || 'virhe'}), käytössä ${fallback}.`);
+      } else {
+        const w = mergeHourly(weather, fetched.rows.value, ['temperature_2m', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'precipitation', 'weather_code'], weatherTimes);
+        coveredPoints = w.coveredPoints;
+        if (w.coveredPoints === 0) {
+          notes.push(`${label} ei kata reittiä, käytössä ${fallback}.`);
+        } else {
+          const partial = w.coveredPoints < n ? ` (${w.coveredPoints}/${n} reittipistettä, muut ${fallback})` : '';
+          const lastAxis = weatherTimes[0]?.[weatherTimes[0].length - 1];
+          const tail = w.lastTime && w.lastTime < lastAxis ? `, ${fmtUntil(w.lastTime)} asti, sen jälkeen ${fallback}` : '';
+          notes.push(`Sää: ${label}${partial}${tail}.`);
+        }
+      }
+      if (source === 'fmi') {
+        const waves = fetched.waves;
+        if (waves.status === 'fulfilled' && waves.value.some(r => r && r.size > 0)) {
+          const m = mergeHourly(marine, waves.value, ['wave_height', 'wave_direction'], weatherTimes);
+          notes.push(`Aallot: FMI WAM${m.lastTime ? ` ${fmtUntil(m.lastTime)} asti` : ''}, sen jälkeen ${fallback === 'Open-Meteo' ? 'Open-Meteo' : 'ei aaltoennustetta'}.`);
+        } else {
+          notes.push('Aallot: Open-Meteo (FMI WAM ei kata reittiä).');
+        }
+      }
+      return { note: notes.join(' '), coveredPoints };
     }
 
     function updateSimulation(progress) {
@@ -1953,6 +2278,16 @@
       if (weatherData.length > 0) updateSimulation(Number(document.getElementById('routeSlider').value) / 100);
     });
 
+    // Säälähde: palautus ja tallennus; vaihdettaessa haetaan uudelleen, jos data on jo ladattu.
+    try {
+      const savedSource = localStorage.getItem(WEATHER_SOURCE_KEY);
+      if (savedSource && WEATHER_SOURCE_LABELS[savedSource]) document.getElementById('weatherSource').value = savedSource;
+    } catch (error) { /* oletus */ }
+    document.getElementById('weatherSource').addEventListener('change', () => {
+      try { localStorage.setItem(WEATHER_SOURCE_KEY, readWeatherSource()); } catch (error) { /* tallennus ei onnistunut */ }
+      if (weatherData.length > 0 && waypoints.length >= 2 && !document.getElementById('btnFetch').disabled) fetchWeatherData();
+    });
+
     document.getElementById('startTime').value = getDefaultStartTime();
     document.getElementById('routeSlider').disabled = true;
     resetWeatherDisplay();
@@ -1976,11 +2311,12 @@
         gridBounds = cached.gridBounds || null;
         sampleRoutePointsData = cached.sampleRoutePointsData || [];
         dataFetchedAt = cached.savedAt || null;
+        weatherSourceNote = cached.weatherSourceNote || '';
         document.getElementById('routeSlider').disabled = false;
         document.getElementById('btnFindBestTime').disabled = false;
         document.getElementById('btnChart').disabled = false;
         const ageMs = dataFetchedAt ? Date.now() - new Date(dataFetchedAt).getTime() : Infinity;
-        setBanner(`Tallennettu säädata ladattu (haettu ${dataFetchedAt ? formatAge(dataFetchedAt) : 'tuntematon aika sitten'}).${ageMs > 6 * 3600 * 1000 ? ' Data on vanhaa: päivitä Hae sää -painikkeella kun verkko on käytettävissä.' : ''}`);
+        setBanner(`Tallennettu säädata ladattu (haettu ${dataFetchedAt ? formatAge(dataFetchedAt) : 'tuntematon aika sitten'}).${weatherSourceNote ? ` ${weatherSourceNote}` : ''}${ageMs > 6 * 3600 * 1000 ? ' Data on vanhaa: päivitä Hae sää -painikkeella kun verkko on käytettävissä.' : ''}`);
         updateSimulation(0);
         drawColoredRoute();
       }
