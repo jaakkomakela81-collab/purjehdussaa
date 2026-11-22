@@ -45,3 +45,62 @@
       vanhan reitin toisen pään sää). Tyhjennys poistaa Hae sää/Käännä-painikkeet käytöstä.
 - [ ] Suomalaiset (FMI) ja ruotsalaiset (SMHI) säälähteet: odottaa verkkoyhteyttä kehitysympäristöstä
       rajapintojen testaamiseksi (ks. keskustelu)
+
+## Seuraavaksi (kirjattu 22.11.2026)
+
+Huom. verkollinen istunto: sallittuihin verkkotunnuksiin tarvitaan `opendata.fmi.fi`,
+`opendata-download-metfcst.smhi.se`, `api.open-meteo.com`, `marine-api.open-meteo.com` ja ORC-hakua
+varten `data.orc.org` (tai laajempi verkkotaso).
+
+### FMI/SMHI-haaran yhdistäminen
+- [ ] Yhdistä haara `claude/confident-maxwell-99mhln` (commit ec354e1: Sääennusteen lähde -valinta,
+      FMI + SMHI + Open-Meteo-varakäyttö) `main`iin. Haara ei ole vielä `main`issa eli julkaistussa
+      sovelluksessa (yllä oleva FMI/SMHI-rivi on tämän haaran puolella vielä "odottaa"-tilassa).
+      Yhdistäminen aiheuttaa pienen ristiriidan TODO.md:n lopussa: ota molemmat puolet.
+      Tarkistettu 22.11.: kaikki 60 aiempaa testiä menevät läpi sen koodilla + 13 mock-testiä (SMHI-arvot,
+      interpolointi, kattavuuden jälkeen Open-Meteo, 429 → SMHI yksin, SMHI 500 → varakäyttö, FMI 400 →
+      varakäyttö) → 73/73.
+- [ ] Testaa FMI ja SMHI oikeilla rajapinnoilla verkollisessa istunnossa. Erityisesti FMI:n onnistuneen
+      vastauksen XML-jäsennys (multipointcoverage) ei ole mock-testattu. Vertaa arvoja Open-Meteoon
+      oikealla reitillä ja tarkista SMHI:n kattavuus Suomenlahdella.
+- [ ] Korjaa: lähdeilmoitus (`weatherSourceNote`) katkeaa kapeassa ilmoituspalkissa (nowrap + ellipsis,
+      max-width 80vw) → näytä lähde ja kattavuus pysyvästi, esim. kaavion otsikossa ja datan iän vieressä
+      (todennäköinen ongelma puhelimella, tarkista oikealla laitteella).
+- [ ] Korjaa: `clearRouteState` ei nollaa `weatherSourceNote`a (vanha teksti voi jäädä näkyviin).
+- [ ] Harkitse "Pahin lähteistä" -yhdistelmää turvarajoihin: SMHI:n 6 h askeleiden interpolointi tasoittaa
+      huippuja ja voi aliarvioida puuskia.
+
+### Veneprofiili (Botnia 6) ja polaarit
+Tavoite: käyttäjä valitsee veneen tyypin asetuksista ja sovellus ottaa sen huomioon ennusteessa
+(matka-aika, ETA, turvarajat) sekä antaa sääperusteisia vinkkejä (esim. reivaus). Vene: **Botnia 6**.
+Nykytila: matka-aika lasketaan kiinteällä nopeudella (`segmentSpeeds` / `speed`-kenttä,
+`getExactRouteGeometry`), joten tuuli ei vaikuta ETA:an.
+- [ ] Selvitä Botnia 6:n mitat ja ominaisuudet (LOA, LWL, uppouma, painolasti, purjepinta-ala, koneen
+      matkanopeus). Älä arvaa: haetaan lähteestä ja käyttäjä varmistaa luvut.
+- [ ] Veneprofiili asetuksiin: esiasetukset (Botnia 6 ensimmäisenä + muutama yleinen kokoluokka) ja omat
+      mitat. Tallennus laitteelle (localStorage), kuten turvarajoilla.
+- [ ] Polaari profiilista: parametrinen malli (LWL → runkonopeus, SA/D- ja D/L-suhteet → polaarin muoto),
+      matka-aika ja ETA tuulen mukaan (vastatuulessa kryssi + kääntöhäviö, kovassa myötätuulessa
+      nopeammin), koneajo kun tuuli on heikko (raja säädettävä), merivirran vaikutus. Näytä selvästi,
+      että nopeudet ovat arvioita. Ei saa rikkoa nykyistä käsin annettua nopeutta (säilytä "kiinteä
+      nopeus" -tila).
+- [ ] Sääperusteiset vinkit (liukusäätimen readout + kaavio): esim. 1. ja 2. reivi, puuskavaroitus,
+      vastaaalto/kovan tuulen vastaisuus, koneajo. Raja-arvot skaalautuvat veneen mukaan ja ovat
+      käyttäjän muokattavissa. Merkittävä ohjeelliseksi arvioksi, ei turvatakuuksi (skipperi päättää).
+- [ ] Turvarajojen oletukset veneprofiilista (nykyiset 12 / 16 m/s / 2 m ovat yleisarvaus).
+- [ ] ORC-haku (vaatii verkon): julkiset todistukset `data.orc.org`, bulk-lataus maittain
+      (`WPub.dll?action=DownRMS&CountryId=FIN&Family=ORC&ext=json`, ORC:n PCS-sivun mukaan, käyttöehdot ja
+      toimivuus testattava), yksittäinen vene nimellä/purjenumerolla; todistuksessa mitat + VPP-nopeudet
+      → polaari. Yhteisön työkalu: github.com/jieter/orc-data. ORC-polaarit ovat liian optimistisia
+      matkapurjehtijalle → säädettävä "matkapurjehdus"-kerroin (oletus < 1). Tarkista, onko Botnia 6
+      ORC-rekisterissä; jos ei, parametrinen malli.
+- [ ] Polaarin kalibrointi GPS-lokista (oma vene vs. malli) – myöhemmin.
+
+### Muut ideat alkuperäisestä parannuslistasta
+- [ ] Solmut oletusyksiköksi (tuuli nyt m/s) tai valinta; Beaufort-asteikko.
+- [ ] Yötila (punainen/himmeä) yöpurjehdukseen.
+- [ ] GPS: oikea ETA nykyisellä nopeudella, kurssipoikkeama (XTE), ankkurihälytys, GPX-vienti/-tuonti.
+- [ ] Reitin jako (URL-parametri tai QR).
+- [ ] Koodin jako tiedostoihin (index.html / style.css / app.js tai ES-moduulit) ja yksikkötestit
+      pisteytyslogiikalle (Playwright-testit ovat toistaiseksi vain istunnon scratchpadissa, ei repossa).
+- [ ] Säädatan pisteitä vain 12 reitin varrella: sovita reitin pituuteen (kasvattaa API-kutsun kokoa).
